@@ -15,14 +15,14 @@ alloc: Allocator,
 unix_file: []const u8,
 router: Router,
 
-pub fn init(
-    a: Allocator,
-    file: []const u8,
-    router: Router,
-) zWSGI {
+pub const Options = struct {
+    file: []const u8 = "./zwsgi_file.sock",
+};
+
+pub fn init(a: Allocator, opts: Options, router: Router) zWSGI {
     return .{
         .alloc = a,
-        .unix_file = file,
+        .unix_file = opts.file,
         .router = router,
     };
 }

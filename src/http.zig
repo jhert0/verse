@@ -18,10 +18,15 @@ listen_addr: std.net.Address,
 router: Router,
 max_request_size: usize = 0xffff,
 
-pub fn init(a: Allocator, host: []const u8, port: u16, router: Router) !HTTP {
+pub const Options = struct {
+    host: []const u8 = "127.0.0.1",
+    port: u16 = 80,
+};
+
+pub fn init(a: Allocator, opts: Options, router: Router) !HTTP {
     return .{
         .alloc = a,
-        .listen_addr = try std.net.Address.parseIp(host, port),
+        .listen_addr = try std.net.Address.parseIp(opts.host, opts.port),
         .router = router,
     };
 }
