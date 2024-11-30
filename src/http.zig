@@ -58,7 +58,7 @@ pub fn serve(http: *HTTP) !void {
             switch (err) {
                 error.NetworkCrash => std.debug.print("client disconnect'\n", .{}),
                 error.Unrouteable => {
-                    std.debug.print("Unrouteable'\n", .{});
+                    log.err("Unrouteable", .{});
                     if (@errorReturnTrace()) |trace| {
                         std.debug.dumpStackTrace(trace.*);
                     }
