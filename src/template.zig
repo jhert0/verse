@@ -1,34 +1,25 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const allocPrint = std.fmt.allocPrint;
+const log = std.log.scoped(.Verse);
+
 const build_mode = @import("builtin").mode;
 const compiled = @import("comptime_templates");
 pub const Structs = @import("comptime_structs");
-const Allocator = std.mem.Allocator;
-const allocPrint = std.fmt.allocPrint;
 
-const HTML = @import("html.zig");
-const Pages = @import("template/page.zig");
 pub const Directive = @import("template/directive.zig");
 
+const Pages = @import("template/page.zig");
 pub const Page = Pages.Page;
 pub const PageRuntime = Pages.PageRuntime;
 
 const MAX_BYTES = 2 <<| 15;
-const TEMPLATE_PATH = "templates/";
-
-const DEBUG = false;
 
 pub const Template = struct {
     // path: []const u8,
     name: []const u8 = "undefined",
     blob: []const u8,
     parent: ?*const Template = null,
-
-    pub fn initWith(self: *Template, a: Allocator, data: []struct { name: []const u8, val: []const u8 }) !void {
-        self.init(a);
-        for (data) |d| {
-            try self.ctx.putSlice(d.name, d.value);
-        }
-    }
 
     pub fn pageOf(self: Template, comptime Kind: type, data: Kind) PageRuntime(Kind) {
         return PageRuntime(Kind).init(.{ .name = self.name, .blob = self.blob }, data);
@@ -51,7 +42,6 @@ pub const builtin: [compiled.data.len]Template = blk: {
     var t: [compiled.data.len]Template = undefined;
     for (compiled.data, &t) |filedata, *dst| {
         dst.* = Template{
-            //.path = filedata.path,
             .name = tailPath(filedata.path),
             .blob = filedata.blob,
         };
@@ -61,10 +51,10 @@ pub const builtin: [compiled.data.len]Template = blk: {
 
 pub var dynamic: []const Template = undefined;
 
-fn loadDynamicTemplates(a: Allocator) !void {
+fn loadDynamicTemplates(a: Allocator, path: []const u8) !void {
     var cwd = std.fs.cwd();
-    var idir = cwd.openDir(TEMPLATE_PATH, .{ .iterate = true }) catch |err| {
-        std.debug.print("Unable to build dynamic templates ({})\n", .{err});
+    var idir = cwd.openDir(path, .{ .iterate = true }) catch |err| {
+        log.warn("Unable to build dynamic templates ({})\n", .{err});
         return;
     };
     defer idir.close();
@@ -74,7 +64,7 @@ fn loadDynamicTemplates(a: Allocator) !void {
     while (try itr.next()) |file| {
         if (file.kind != .file) continue;
         const name = try std.mem.join(a, "/", &[2][]const u8{
-            TEMPLATE_PATH,
+            path,
             file.name,
         });
         defer a.free(name);
@@ -89,8 +79,8 @@ fn loadDynamicTemplates(a: Allocator) !void {
     dynamic = try list.toOwnedSlice();
 }
 
-pub fn initDynamic(a: Allocator) void {
-    loadDynamicTemplates(a) catch unreachable;
+pub fn initDynamic(a: Allocator, path: []const u8) void {
+    loadDynamicTemplates(a, path) catch unreachable;
 }
 
 pub fn raze(a: Allocator) void {
@@ -214,30 +204,16 @@ pub fn findPageType(comptime name: []const u8) type {
     return @field(Structs, local[0..llen]);
 }
 
-test "build.zig included templates" {
-    const names = [_][]const u8{
-        "templates/4XX.html",
-        "templates/5XX.html",
-        "templates/index.html",
-        "templates/code.html",
-    };
-
-    names: for (names) |name| {
-        for (compiled.data) |bld| {
-            if (std.mem.eql(u8, name, bld.path)) continue :names;
-        } else return error.TemplateMissing;
-    }
-}
-
 test "load templates" {
     const a = std.testing.allocator;
-    initDynamic(a);
+
+    initDynamic(a, "src/fallback_html/");
     defer raze(a);
 
     //try std.testing.expectEqual(3, builtin.len);
     for (builtin) |bi| {
-        if (std.mem.eql(u8, bi.name, "index.html")) {
-            try std.testing.expectEqualStrings("index.html", bi.name);
+        if (std.mem.eql(u8, bi.name, "fallback_html/index.html")) {
+            try std.testing.expectEqualStrings("fallback_html/index.html", bi.name);
             try std.testing.expectEqualStrings("<!DOCTYPE html>", bi.blob[0..15]);
             break;
         }
@@ -247,8 +223,8 @@ test "load templates" {
 }
 
 test findTemplate {
-    const tmpl = findTemplate("user_commits.html");
-    try std.testing.expectEqualStrings("user_commits.html", tmpl.name);
+    const tmpl = findTemplate("fallback_html/index.html");
+    try std.testing.expectEqualStrings("fallback_html/index.html", tmpl.name);
 }
 
 test "directive something" {

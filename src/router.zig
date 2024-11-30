@@ -1,24 +1,26 @@
 const std = @import("std");
+const log = std.log.scoped(.Verse);
+const Allocator = std.mem.Allocator;
 const eql = std.mem.eql;
+pub const UriIter = std.mem.SplitIterator(u8, .scalar);
 
 const Verse = @import("verse.zig");
 
-const Allocator = std.mem.Allocator;
-
-//const api = @import("api.zig");
-const Response = @import("response.zig");
 const Request = @import("request.zig");
 const StaticFile = @import("static-file.zig");
 
 pub const Errors = @import("errors.zig");
 pub const Error = Errors.ServerError || Errors.ClientError || Errors.NetworkError;
 
-pub const UriIter = std.mem.SplitIterator(u8, .scalar);
+pub const RouteFn = *const fn (*Verse) Error!BuildFn;
+pub const BuildFn = *const fn (*Verse) Error!void;
+pub const PrepareFn = *const fn (*Verse, BuildFn) Error!void;
 
-pub const Router = *const fn (*Verse) Error!Callable;
-pub const Callable = *const fn (*Verse) Error!void;
+pub const Router = @This();
 
-pub const DEBUG: bool = false;
+routefn: RouteFn,
+// TODO better naming
+buildfn: PrepareFn = basePrepare,
 
 /// Methods is a struct so bitwise or will work as expected
 pub const Methods = packed struct {
@@ -46,15 +48,15 @@ pub const Methods = packed struct {
 };
 
 pub const Endpoint = struct {
-    callable: Callable,
+    builder: BuildFn,
     methods: Methods = .{ .GET = true },
 };
 
 pub const Match = struct {
     name: []const u8,
     match: union(enum) {
-        call: Callable,
-        route: Router,
+        build: BuildFn,
+        route: RouteFn,
         simple: []const Match,
     },
     methods: Methods = .{ .GET = true },
@@ -66,15 +68,15 @@ pub fn ROUTE(comptime name: []const u8, comptime match: anytype) Match {
         .match = switch (@typeInfo(@TypeOf(match))) {
             .Pointer => |ptr| switch (@typeInfo(ptr.child)) {
                 .Fn => |fnc| switch (fnc.return_type orelse null) {
-                    Error!void => .{ .call = match },
-                    Error!Callable => .{ .route = match },
+                    Error!void => .{ .build = match },
+                    Error!BuildFn => .{ .route = match },
                     else => @compileError("unknown function return type"),
                 },
                 else => .{ .simple = match },
             },
             .Fn => |fnc| switch (fnc.return_type orelse null) {
-                Error!void => .{ .call = match },
-                Error!Callable => .{ .route = match },
+                Error!void => .{ .build = match },
+                Error!BuildFn => .{ .route = match },
                 else => @compileError("unknown function return type"),
             },
             else => |el| @compileError("match type not supported, for provided type [" ++
@@ -86,19 +88,19 @@ pub fn ROUTE(comptime name: []const u8, comptime match: anytype) Match {
     };
 }
 
-pub fn any(comptime name: []const u8, comptime match: Callable) Match {
+pub fn any(comptime name: []const u8, comptime match: BuildFn) Match {
     var mr = ROUTE(name, match);
     mr.methods = .{ .GET = true, .POST = true };
     return mr;
 }
 
-pub fn GET(comptime name: []const u8, comptime match: Callable) Match {
+pub fn GET(comptime name: []const u8, comptime match: BuildFn) Match {
     var mr = ROUTE(name, match);
     mr.methods = .{ .GET = true };
     return mr;
 }
 
-pub fn POST(comptime name: []const u8, comptime match: Callable) Match {
+pub fn POST(comptime name: []const u8, comptime match: BuildFn) Match {
     var mr = ROUTE(name, match);
     mr.methods = .{ .POST = true };
     return mr;
@@ -110,7 +112,7 @@ pub fn STATIC(comptime name: []const u8) Match {
     return mr;
 }
 
-pub fn defaultResponse(comptime code: std.http.Status) Callable {
+pub fn defaultResponse(comptime code: std.http.Status) BuildFn {
     return switch (code) {
         .not_found => notFound,
         .internal_server_error => internalServerError,
@@ -118,48 +120,48 @@ pub fn defaultResponse(comptime code: std.http.Status) Callable {
     };
 }
 
-fn notFound(ctx: *Verse) Error!void {
-    ctx.response.status = .not_found;
+fn notFound(vrs: *Verse) Error!void {
+    vrs.response.status = .not_found;
     const E4XX = @embedFile("fallback_html/4XX.html");
-    return ctx.sendRawSlice(E4XX);
+    return vrs.sendRawSlice(E4XX);
 }
 
-fn internalServerError(ctx: *Verse) Error!void {
-    ctx.response.status = .internal_server_error;
+fn internalServerError(vrs: *Verse) Error!void {
+    vrs.response.status = .internal_server_error;
     const E5XX = @embedFile("fallback_html/5XX.html");
-    return ctx.sendRawSlice(E5XX);
+    return vrs.sendRawSlice(E5XX);
 }
 
-fn default(ctx: *Verse) Error!void {
+fn default(vrs: *Verse) Error!void {
     const index = @embedFile("fallback_html/index.html");
-    return ctx.sendRawSlice(index);
+    return vrs.sendRawSlice(index);
 }
 
-pub fn router(ctx: *Verse, comptime routes: []const Match) Callable {
-    const search = ctx.uri.peek() orelse {
-        if (DEBUG) std.debug.print("No endpoint found: URI is empty.\n", .{});
+pub fn router(vrs: *Verse, comptime routes: []const Match) BuildFn {
+    const search = vrs.uri.peek() orelse {
+        log.warn("No endpoint found: URI is empty.", .{});
         return notFound;
     };
     inline for (routes) |ep| {
         if (eql(u8, search, ep.name)) {
             switch (ep.match) {
-                .call => |call| {
-                    if (ep.methods.matchMethod(ctx.request.method))
+                .build => |call| {
+                    if (ep.methods.matchMethod(vrs.request.method))
                         return call;
                 },
                 .route => |route| {
-                    return route(ctx) catch |err| switch (err) {
+                    return route(vrs) catch |err| switch (err) {
                         error.Unrouteable => return notFound,
                         else => unreachable,
                     };
                 },
                 .simple => |simple| {
-                    _ = ctx.uri.next();
-                    if (ctx.uri.peek() == null and
+                    _ = vrs.uri.next();
+                    if (vrs.uri.peek() == null and
                         eql(u8, simple[0].name, "") and
-                        simple[0].match == .call)
-                        return simple[0].match.call;
-                    return router(ctx, simple);
+                        simple[0].match == .build)
+                        return simple[0].match.build;
+                    return router(vrs, simple);
                 },
             }
         }
@@ -171,27 +173,31 @@ const root = [_]Match{
     ROUTE("", default),
 };
 
-pub fn baseRouter(ctx: *Verse) Error!void {
-    if (DEBUG) std.debug.print("baserouter {s}\n", .{ctx.uri.peek().?});
-    if (ctx.uri.peek()) |first| {
+pub fn basePrepare(vrs: *Verse, build: BuildFn) Error!void {
+    return build(vrs);
+}
+
+pub fn baseRouter(vrs: *Verse) Error!void {
+    log.debug("baserouter {s}", .{vrs.uri.peek().?});
+    if (vrs.uri.peek()) |first| {
         if (first.len > 0) {
-            const route: Callable = router(ctx, &root);
-            return route(ctx);
+            const route: BuildFn = router(vrs, &root);
+            return route(vrs);
         }
     }
-    return default(ctx);
+    return default(vrs);
 }
 
 const root_with_static = root ++
     [_]Match{.{ .name = "static", .match = .{ .call = StaticFile.file } }};
 
-pub fn baseRouterHtml(ctx: *Verse) Error!void {
-    if (DEBUG) std.debug.print("baserouter {s}\n", .{ctx.uri.peek().?});
-    if (ctx.uri.peek()) |first| {
+pub fn baseRouterHtml(vrs: *Verse) Error!void {
+    log.debug("baserouter {s}\n", .{vrs.uri.peek().?});
+    if (vrs.uri.peek()) |first| {
         if (first.len > 0) {
-            const route: Callable = router(ctx, &root_with_static);
-            return route(ctx);
+            const route: BuildFn = router(vrs, &root_with_static);
+            return route(vrs);
         }
     }
-    return default(ctx);
+    return default(vrs);
 }

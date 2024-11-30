@@ -1,10 +1,10 @@
 pub const std = @import("std");
 const Allocator = std.mem.Allocator;
 const splitScalar = std.mem.splitScalar;
+const log = std.log.scoped(.Verse);
 
-pub const zWSGI = @import("zwsgi.zig");
-//const Auth = @import("auth.zig");
-
+pub const Server = @import("server.zig");
+pub const zWSGI = Server.zWSGI;
 pub const zWSGIRequest = zWSGI.zWSGIRequest;
 
 pub const Request = @import("request.zig");
@@ -15,6 +15,8 @@ pub const HTML = @import("html.zig");
 pub const DOM = @import("dom.zig");
 pub const Router = @import("router.zig");
 pub const UriIter = Router.UriIter;
+
+pub const Auth = @import("auth.zig");
 
 pub const Ini = @import("ini.zig");
 pub const Config = Ini.Config;
@@ -34,28 +36,6 @@ cfg: ?Config,
 auth: Auth,
 route_ctx: ?*const anyopaque = null,
 
-pub const Auth = struct {
-    user: User = User{},
-
-    pub const User = struct {
-        username: []const u8 = "invalid username",
-    };
-
-    pub fn valid(a: Auth) bool {
-        _ = a;
-        return true;
-    }
-
-    pub fn validOrError(a: Auth) !void {
-        if (!a.valid()) return error.Unauthenticated;
-    }
-
-    pub fn currentUser(a: Auth, alloc: Allocator) !User {
-        _ = alloc;
-        return a.user;
-    }
-};
-
 const VarPair = struct {
     []const u8,
     []const u8,
@@ -63,7 +43,6 @@ const VarPair = struct {
 
 pub fn init(a: Allocator, cfg: ?Config, req: Request, res: Response, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
-    //const reqheader = req.headers
     return .{
         .alloc = a,
         .request = req,
@@ -75,43 +54,49 @@ pub fn init(a: Allocator, cfg: ?Config, req: Request, res: Response, reqdata: Re
     };
 }
 
-pub fn sendPage(ctx: *Verse, page: anytype) Error!void {
-    ctx.response.start() catch |err| switch (err) {
-        error.BrokenPipe => return error.NetworkCrash,
-        else => unreachable,
-    };
-    const loggedin = if (ctx.auth.valid()) "<a href=\"#\">Logged In</a>" else "Public";
+pub fn sendPage(vrs: *Verse, page: anytype) Error!void {
+    try vrs.quickStart();
+    const loggedin = if (vrs.auth.valid()) "<a href=\"#\">Logged In</a>" else "Public";
     const T = @TypeOf(page.*);
     if (@hasField(T, "data") and @hasField(@TypeOf(page.data), "body_header")) {
         page.data.body_header.?.nav.?.nav_auth = loggedin;
     }
 
-    const writer = ctx.response.writer();
+    const writer = vrs.response.writer();
     page.format("{}", .{}, writer) catch |err| switch (err) {
-        else => std.debug.print("Page Build Error {}\n", .{err}),
+        else => log.err("Page Build Error {}", .{err}),
     };
 }
 
-pub fn sendRawSlice(ctx: *Verse, slice: []const u8) Error!void {
-    ctx.response.send(slice) catch unreachable;
+///
+pub fn sendRawSlice(vrs: *Verse, slice: []const u8) Error!void {
+    vrs.response.send(slice) catch return error.Unknown;
 }
 
-pub fn sendError(ctx: *Verse, comptime code: std.http.Status) Error!void {
-    return Router.defaultResponse(code)(ctx);
+pub fn sendError(vrs: *Verse, comptime code: std.http.Status) Error!void {
+    return Router.defaultResponse(code)(vrs);
 }
 
-pub fn sendJSON(ctx: *Verse, json: anytype) Error!void {
-    ctx.response.start() catch |err| switch (err) {
+pub fn sendJSON(vrs: *Verse, json: anytype) Error!void {
+    try vrs.quickStart();
+    const data = std.json.stringifyAlloc(vrs.alloc, json, .{
+        .emit_null_optional_fields = false,
+    }) catch |err| {
+        log.err("Error trying to print json {}", .{err});
+        return error.Unknown;
+    };
+    vrs.response.writeAll(data) catch unreachable;
+    vrs.response.finish() catch unreachable;
+}
+
+/// This function may be removed in the future
+pub fn quickStart(vrs: *Verse) Error!void {
+    vrs.response.start() catch |err| switch (err) {
         error.BrokenPipe => return error.NetworkCrash,
         else => unreachable,
     };
+}
 
-    const data = std.json.stringifyAlloc(ctx.alloc, json, .{
-        .emit_null_optional_fields = false,
-    }) catch |err| {
-        std.debug.print("Error trying to print json {}\n", .{err});
-        return error.Unknown;
-    };
-    ctx.response.writeAll(data) catch unreachable;
-    ctx.response.finish() catch unreachable;
+test "Verse" {
+    std.testing.refAllDecls(@This());
 }

@@ -1,102 +1,59 @@
 const std = @import("std");
-
 const Allocator = std.mem.Allocator;
-const Server = std.net.Server;
+const log = std.log.scoped(.Verse);
+const net = std.net;
 
 const Verse = @import("verse.zig");
 const Request = @import("request.zig");
 const Response = @import("response.zig");
 const Router = @import("router.zig");
 const RequestData = @import("request_data.zig");
-const Config = @import("ini.zig").Config;
-const DOM = @import("dom.zig");
-const HTML = @import("html.zig");
 
-const ZWSGI = @This();
+pub const zWSGI = @This();
 
 alloc: Allocator,
-config: Config,
-routefn: RouterFn,
-buildfn: BuildFn,
-runmode: RunMode = .unix,
+unix_file: []const u8,
+router: Router,
 
-pub const RouterFn = *const fn (*Verse) Router.Callable;
-// TODO provide default for this?
-pub const BuildFn = *const fn (*Verse, Router.Callable) Router.Error!void;
-
-const uProtoHeader = packed struct {
-    mod1: u8 = 0,
-    size: u16 = 0,
-    mod2: u8 = 0,
-};
-
-const uWSGIVar = struct {
-    key: []const u8,
-    val: []const u8,
-
-    pub fn read(_: []u8) uWSGIVar {
-        return uWSGIVar{ .key = "", .val = "" };
-    }
-
-    pub fn format(self: uWSGIVar, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
-        try std.fmt.format(out, "\"{s}\" = \"{s}\"", .{
-            self.key,
-            if (self.val.len > 0) self.val else "[Empty]",
-        });
-    }
-};
-
-pub const zWSGIRequest = struct {
-    header: uProtoHeader,
-    acpt: Server.Connection,
-    vars: []uWSGIVar,
-    body: ?[]u8 = null,
-};
-
-pub fn init(a: Allocator, config: Config, route_fn: RouterFn, build_fn: BuildFn) ZWSGI {
+pub fn init(a: Allocator, file: []const u8, router: Router) zWSGI {
     return .{
         .alloc = a,
-        .config = config,
-        .routefn = route_fn,
-        .buildfn = build_fn,
+        .unix_file = file,
+        .router = router,
     };
 }
 
-const HOST = "127.0.0.1";
-const PORT = 2000;
-const FILE = "./srctree.sock";
-
-fn serveUnix(zwsgi: *ZWSGI) !void {
+pub fn serve(z: *zWSGI) !void {
     var cwd = std.fs.cwd();
-    if (cwd.access(FILE, .{})) {
-        try cwd.deleteFile(FILE);
+    if (cwd.access(z.unix_file, .{})) {
+        try cwd.deleteFile(z.unix_file);
     } else |_| {}
 
-    const uaddr = try std.net.Address.initUnix(FILE);
+    const uaddr = try std.net.Address.initUnix(z.unix_file);
     var server = try uaddr.listen(.{});
     defer server.deinit();
 
-    const path = try std.fs.cwd().realpathAlloc(zwsgi.alloc, FILE);
-    defer zwsgi.alloc.free(path);
-    const zpath = try zwsgi.alloc.dupeZ(u8, path);
-    defer zwsgi.alloc.free(zpath);
+    const path = try std.fs.cwd().realpathAlloc(z.alloc, z.unix_file);
+    defer z.alloc.free(path);
+    const zpath = try z.alloc.dupeZ(u8, path);
+    defer z.alloc.free(zpath);
     const mode = std.os.linux.chmod(zpath, 0o777);
     if (false) std.debug.print("mode {o}\n", .{mode});
-    std.debug.print("Unix server listening\n", .{});
+    log.warn("Unix server listening\n", .{});
 
     while (true) {
         var acpt = try server.accept();
         defer acpt.stream.close();
         var timer = try std.time.Timer.start();
 
-        var arena = std.heap.ArenaAllocator.init(zwsgi.alloc);
+        var arena = std.heap.ArenaAllocator.init(z.alloc);
         defer arena.deinit();
         const a = arena.allocator();
 
-        var ctx = try zwsgi.buildVerseuWSGI(a, &acpt);
+        var ctx = try buildVerseuWSGI(a, &acpt);
 
         defer {
-            std.log.err("zWSGI: [{d:.3}] {s} - {s}: {s} -- \"{s}\"", .{
+            log.err("zWSGI: [{d:.3}] {s} - {s}: {s} -- \"{s}\"", .{
                 @as(f64, @floatFromInt(timer.lap())) / 1000000.0,
                 findOr(ctx.request.raw_request.zwsgi.vars, "REMOTE_ADDR"),
                 findOr(ctx.request.raw_request.zwsgi.vars, "REQUEST_METHOD"),
@@ -105,12 +62,12 @@ fn serveUnix(zwsgi: *ZWSGI) !void {
             });
         }
 
-        const callable = zwsgi.routefn(&ctx);
-        zwsgi.buildfn(&ctx, callable) catch |err| {
+        const callable = try z.router.routefn(&ctx);
+        z.router.buildfn(&ctx, callable) catch |err| {
             switch (err) {
-                error.NetworkCrash => std.debug.print("client disconnect'\n", .{}),
+                error.NetworkCrash => log.err("client disconnect", .{}),
                 error.Unrouteable => {
-                    std.debug.print("Unrouteable'\n", .{});
+                    log.err("Unrouteable", .{});
                     if (@errorReturnTrace()) |trace| {
                         std.debug.dumpStackTrace(trace.*);
                     }
@@ -121,12 +78,12 @@ fn serveUnix(zwsgi: *ZWSGI) !void {
                 error.AndExit,
                 error.NoSpaceLeft,
                 => {
-                    std.debug.print("Unexpected error '{}'\n", .{err});
+                    log.err("Unexpected error '{}'", .{err});
                     return err;
                 },
                 error.InvalidURI => unreachable,
                 error.OutOfMemory => {
-                    std.debug.print("Out of memory at '{}'\n", .{arena.queryCapacity()});
+                    log.err("Out of memory at '{}'", .{arena.queryCapacity()});
                     return err;
                 },
                 error.Abusive,
@@ -134,12 +91,12 @@ fn serveUnix(zwsgi: *ZWSGI) !void {
                 error.BadData,
                 error.DataMissing,
                 => {
-                    std.debug.print("Abusive {} because {}\n", .{ ctx.request, err });
+                    log.err("Abusive {} because {}", .{ ctx.request, err });
                     for (ctx.request.raw_request.zwsgi.vars) |vars| {
-                        std.debug.print("Abusive var '{s}' => '''{s}'''\n", .{ vars.key, vars.val });
+                        log.err("Abusive var '{s}' => '''{s}'''", .{ vars.key, vars.val });
                     }
                     if (ctx.reqdata.post) |post_data| {
-                        std.debug.print("post data => '''{s}'''\n", .{post_data.rawpost});
+                        log.err("post data => '''{s}'''", .{post_data.rawpost});
                     }
                 },
             }
@@ -147,93 +104,12 @@ fn serveUnix(zwsgi: *ZWSGI) !void {
     }
 }
 
-fn serveHttp(zwsgi: *ZWSGI) !void {
-    const addr = std.net.Address.parseIp(HOST, PORT) catch unreachable;
-    var srv = try addr.listen(.{ .reuse_address = true });
-    defer srv.deinit();
-    std.debug.print("HTTP Server listening\n", .{});
-
-    const path = try std.fs.cwd().realpathAlloc(zwsgi.alloc, FILE);
-    defer zwsgi.alloc.free(path);
-    const zpath = try zwsgi.alloc.dupeZ(u8, path);
-    defer zwsgi.alloc.free(zpath);
-
-    const request_buffer: []u8 = try zwsgi.alloc.alloc(u8, 0xffff);
-    defer zwsgi.alloc.free(request_buffer);
-
-    while (true) {
-        var conn = try srv.accept();
-        defer conn.stream.close();
-        std.debug.print("HTTP conn from {}\n", .{conn.address});
-        var hsrv = std.http.Server.init(conn, request_buffer);
-        var arena = std.heap.ArenaAllocator.init(zwsgi.alloc);
-        defer arena.deinit();
-        const a = arena.allocator();
-
-        var hreq = try hsrv.receiveHead();
-
-        var ctx = try zwsgi.buildVerseHttp(a, &hreq);
-        var ipbuf: [0x20]u8 = undefined;
-        const ipport = try std.fmt.bufPrint(&ipbuf, "{}", .{conn.address});
-        if (std.mem.indexOf(u8, ipport, ":")) |i| {
-            try ctx.request.addHeader("REMOTE_ADDR", ipport[0..i]);
-            try ctx.request.addHeader("REMOTE_PORT", ipport[i + 1 ..]);
-        } else unreachable;
-
-        const callable = zwsgi.routefn(&ctx);
-        zwsgi.buildfn(&ctx, callable) catch |err| {
-            switch (err) {
-                error.NetworkCrash => std.debug.print("client disconnect'\n", .{}),
-                error.Unrouteable => {
-                    std.debug.print("Unrouteable'\n", .{});
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
-                },
-                error.NotImplemented,
-                error.Unknown,
-                error.ReqResInvalid,
-                error.AndExit,
-                error.NoSpaceLeft,
-                => {
-                    std.debug.print("Unexpected error '{}'\n", .{err});
-                    return err;
-                },
-                error.InvalidURI => unreachable,
-                error.OutOfMemory => {
-                    std.debug.print("Out of memory at '{}'\n", .{arena.queryCapacity()});
-                    return err;
-                },
-                error.Abusive,
-                error.Unauthenticated,
-                error.BadData,
-                error.DataMissing,
-                => {
-                    std.debug.print("Abusive {} because {}\n", .{ ctx.request, err });
-                    for (ctx.request.raw_request.zwsgi.vars) |vars| {
-                        std.debug.print("Abusive var '{s}' => '''{s}'''\n", .{ vars.key, vars.val });
-                    }
-                },
-            }
-        };
-    }
-    unreachable;
-}
-
-pub const RunMode = enum {
-    unix,
-    http,
-    other,
-    stop,
+pub const zWSGIRequest = struct {
+    header: uProtoHeader,
+    acpt: net.Server.Connection,
+    vars: []uWSGIVar,
+    body: ?[]u8 = null,
 };
-
-pub fn serve(zwsgi: *ZWSGI) !void {
-    switch (zwsgi.runmode) {
-        .unix => try zwsgi.serveUnix(),
-        .http => try zwsgi.serveHttp(),
-        else => {},
-    }
-}
 
 fn readU16(b: *const [2]u8) u16 {
     std.debug.assert(b.len >= 2);
@@ -268,7 +144,27 @@ fn readVars(a: Allocator, b: []const u8) ![]uWSGIVar {
     return try list.toOwnedSlice();
 }
 
-const dump_vars = false;
+const uProtoHeader = packed struct {
+    mod1: u8 = 0,
+    size: u16 = 0,
+    mod2: u8 = 0,
+};
+
+const uWSGIVar = struct {
+    key: []const u8,
+    val: []const u8,
+
+    pub fn read(_: []u8) uWSGIVar {
+        return uWSGIVar{ .key = "", .val = "" };
+    }
+
+    pub fn format(self: uWSGIVar, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
+        try std.fmt.format(out, "\"{s}\" = \"{s}\"", .{
+            self.key,
+            if (self.val.len > 0) self.val else "[Empty]",
+        });
+    }
+};
 
 fn find(list: []uWSGIVar, search: []const u8) ?[]const u8 {
     for (list) |each| {
@@ -281,7 +177,7 @@ fn findOr(list: []uWSGIVar, search: []const u8) []const u8 {
     return find(list, search) orelse "[missing]";
 }
 
-fn buildVerse(z: ZWSGI, a: Allocator, request: *Request) !Verse {
+pub fn buildVerse(a: Allocator, request: *Request) !Verse {
     var post_data: ?RequestData.PostData = null;
     var reqdata: RequestData = undefined;
     switch (request.raw_request) {
@@ -293,13 +189,13 @@ fn buildVerse(z: ZWSGI, a: Allocator, request: *Request) !Verse {
                 if (post_size > 0) {
                     var reader = zreq.acpt.stream.reader().any();
                     post_data = try RequestData.readBody(a, &reader, post_size, h_type);
-                    if (dump_vars) std.log.info(
+                    log.debug(
                         "post data \"{s}\" {{{any}}}",
                         .{ post_data.?.rawpost, post_data.?.rawpost },
                     );
 
                     for (post_data.?.items) |itm| {
-                        if (dump_vars) std.log.info("{}", .{itm});
+                        log.debug("{}", .{itm});
                     }
                 }
             }
@@ -319,13 +215,13 @@ fn buildVerse(z: ZWSGI, a: Allocator, request: *Request) !Verse {
                     const h_type = hreq.head.content_type orelse "text/plain";
                     var reader = try hreq.reader();
                     post_data = try RequestData.readBody(a, &reader, h_len, h_type);
-                    if (dump_vars) std.log.info(
+                    log.debug(
                         "post data \"{s}\" {{{any}}}",
                         .{ post_data.?.rawpost, post_data.?.rawpost },
                     );
 
                     for (post_data.?.items) |itm| {
-                        if (dump_vars) std.log.info("{}", .{itm});
+                        log.debug("{}", .{itm});
                     }
                 }
             }
@@ -342,28 +238,10 @@ fn buildVerse(z: ZWSGI, a: Allocator, request: *Request) !Verse {
     }
 
     const response = try Response.init(a, request);
-    return Verse.init(a, z.config, request.*, response, reqdata);
+    return Verse.init(a, null, request.*, response, reqdata);
 }
 
-fn readHttpHeaders(a: Allocator, req: *std.http.Server.Request) !Request {
-    //const vars = try readVars(a, buf);
-
-    var itr_headers = req.iterateHeaders();
-    while (itr_headers.next()) |header| {
-        std.debug.print("http header => {s} -> {s}\n", .{ header.name, header.value });
-        if (dump_vars) std.log.info("{}", .{header});
-    }
-
-    return try Request.init(a, req);
-}
-
-fn buildVerseHttp(z: ZWSGI, a: Allocator, req: *std.http.Server.Request) !Verse {
-    var request = try readHttpHeaders(a, req);
-    std.debug.print("http target -> {s}\n", .{request.uri});
-    return z.buildVerse(a, &request);
-}
-
-fn readuWSGIHeader(a: Allocator, acpt: Server.Connection) !Request {
+fn readuWSGIHeader(a: Allocator, acpt: net.Server.Connection) !Request {
     var uwsgi_header = uProtoHeader{};
     var ptr: [*]u8 = @ptrCast(&uwsgi_header);
     _ = try acpt.stream.read(@alignCast(ptr[0..4]));
@@ -376,7 +254,7 @@ fn readuWSGIHeader(a: Allocator, acpt: Server.Connection) !Request {
 
     const vars = try readVars(a, buf);
     for (vars) |v| {
-        if (dump_vars) std.log.info("{}", .{v});
+        log.debug("{}", .{v});
     }
 
     return try Request.init(
@@ -389,8 +267,8 @@ fn readuWSGIHeader(a: Allocator, acpt: Server.Connection) !Request {
     );
 }
 
-fn buildVerseuWSGI(z: ZWSGI, a: Allocator, conn: *Server.Connection) !Verse {
+fn buildVerseuWSGI(a: Allocator, conn: *net.Server.Connection) !Verse {
     var request = try readuWSGIHeader(a, conn.*);
 
-    return z.buildVerse(a, &request);
+    return buildVerse(a, &request);
 }
