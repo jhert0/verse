@@ -15,7 +15,11 @@ alloc: Allocator,
 unix_file: []const u8,
 router: Router,
 
-pub fn init(a: Allocator, file: []const u8, router: Router) zWSGI {
+pub fn init(
+    a: Allocator,
+    file: []const u8,
+    router: Router,
+) zWSGI {
     return .{
         .alloc = a,
         .unix_file = file,
@@ -238,7 +242,7 @@ pub fn buildVerse(a: Allocator, request: *Request) !Verse {
     }
 
     const response = try Response.init(a, request);
-    return Verse.init(a, null, request.*, response, reqdata);
+    return Verse.init(a, request.*, response, reqdata);
 }
 
 fn readuWSGIHeader(a: Allocator, acpt: net.Server.Connection) !Request {

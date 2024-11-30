@@ -11,7 +11,6 @@ pub const zWSGI = @import("zwsgi.zig");
 pub const Http = @import("http.zig");
 
 alloc: Allocator,
-//config: Config,
 router: Router,
 //runmode: RunMode,
 interface: union(RunMode) {

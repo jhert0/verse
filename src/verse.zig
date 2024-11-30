@@ -4,22 +4,15 @@ const splitScalar = std.mem.splitScalar;
 const log = std.log.scoped(.Verse);
 
 pub const Server = @import("server.zig");
-pub const zWSGI = Server.zWSGI;
-pub const zWSGIRequest = zWSGI.zWSGIRequest;
 
 pub const Request = @import("request.zig");
 pub const Response = @import("response.zig");
 pub const RequestData = @import("request_data.zig");
 pub const Template = @import("template.zig");
-pub const HTML = @import("html.zig");
-pub const DOM = @import("dom.zig");
 pub const Router = @import("router.zig");
 pub const UriIter = Router.UriIter;
 
 pub const Auth = @import("auth.zig");
-
-pub const Ini = @import("ini.zig");
-pub const Config = Ini.Config;
 
 const Error = @import("errors.zig").Error;
 
@@ -30,7 +23,6 @@ request: Request,
 response: Response,
 reqdata: RequestData,
 uri: UriIter,
-cfg: ?Config,
 
 // TODO fix this unstable API
 auth: Auth,
@@ -41,7 +33,7 @@ const VarPair = struct {
     []const u8,
 };
 
-pub fn init(a: Allocator, cfg: ?Config, req: Request, res: Response, reqdata: RequestData) !Verse {
+pub fn init(a: Allocator, req: Request, res: Response, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
     return .{
         .alloc = a,
@@ -49,7 +41,6 @@ pub fn init(a: Allocator, cfg: ?Config, req: Request, res: Response, reqdata: Re
         .response = res,
         .reqdata = reqdata,
         .uri = splitScalar(u8, req.uri[1..], '/'),
-        .cfg = cfg,
         .auth = Auth{},
     };
 }
