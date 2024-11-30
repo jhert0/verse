@@ -19,7 +19,7 @@ const Error = @import("errors.zig").Error;
 pub const Verse = @This();
 
 alloc: Allocator,
-request: Request,
+request: *const Request,
 response: Response,
 reqdata: RequestData,
 uri: UriIter,
@@ -33,7 +33,7 @@ const VarPair = struct {
     []const u8,
 };
 
-pub fn init(a: Allocator, req: Request, res: Response, reqdata: RequestData) !Verse {
+pub fn init(a: Allocator, req: *const Request, res: Response, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
     return .{
         .alloc = a,

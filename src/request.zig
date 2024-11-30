@@ -7,8 +7,8 @@ const zWSGIRequest = @import("zwsgi.zig").zWSGIRequest;
 
 pub const Request = @This();
 
-pub const RawRequests = union(enum) {
-    zwsgi: zWSGIRequest,
+pub const RawReq = union(enum) {
+    zwsgi: *zWSGIRequest,
     http: *std.http.Server.Request,
 };
 
@@ -40,17 +40,16 @@ pub const Methods = enum(u8) {
 };
 
 /// TODO this is unstable and likely to be removed
-raw_request: RawRequests,
-
+raw: RawReq,
 headers: HeaderList,
 uri: []const u8,
 method: Methods,
 
 pub fn init(a: Allocator, raw_req: anytype) !Request {
     switch (@TypeOf(raw_req)) {
-        zWSGIRequest => {
+        *zWSGIRequest => {
             var req = Request{
-                .raw_request = .{ .zwsgi = raw_req },
+                .raw = .{ .zwsgi = raw_req },
                 .headers = HeaderList.init(a),
                 .uri = undefined,
                 .method = Methods.GET,
@@ -68,7 +67,7 @@ pub fn init(a: Allocator, raw_req: anytype) !Request {
         },
         *std.http.Server.Request => {
             var req = Request{
-                .raw_request = .{ .http = raw_req },
+                .raw = .{ .http = raw_req },
                 .headers = HeaderList.init(a),
                 .uri = raw_req.head.target,
                 .method = switch (raw_req.head.method) {

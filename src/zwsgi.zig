@@ -54,15 +54,18 @@ pub fn serve(z: *zWSGI) !void {
         defer arena.deinit();
         const a = arena.allocator();
 
-        var ctx = try buildVerseuWSGI(a, &acpt);
+        var zreq = try readHeader(a, &acpt);
+        var request = try Request.init(a, &zreq);
+        var ctx = try buildVerse(a, &request);
 
         defer {
+            const vars = ctx.request.raw.zwsgi.vars;
             log.err("zWSGI: [{d:.3}] {s} - {s}: {s} -- \"{s}\"", .{
                 @as(f64, @floatFromInt(timer.lap())) / 1000000.0,
-                findOr(ctx.request.raw_request.zwsgi.vars, "REMOTE_ADDR"),
-                findOr(ctx.request.raw_request.zwsgi.vars, "REQUEST_METHOD"),
-                findOr(ctx.request.raw_request.zwsgi.vars, "REQUEST_URI"),
-                findOr(ctx.request.raw_request.zwsgi.vars, "HTTP_USER_AGENT"),
+                findOr(vars, "REMOTE_ADDR"),
+                findOr(vars, "REQUEST_METHOD"),
+                findOr(vars, "REQUEST_URI"),
+                findOr(vars, "HTTP_USER_AGENT"),
             });
         }
 
@@ -96,7 +99,7 @@ pub fn serve(z: *zWSGI) !void {
                 error.DataMissing,
                 => {
                     log.err("Abusive {} because {}", .{ ctx.request, err });
-                    for (ctx.request.raw_request.zwsgi.vars) |vars| {
+                    for (ctx.request.raw.zwsgi.vars) |vars| {
                         log.err("Abusive var '{s}' => '''{s}'''", .{ vars.key, vars.val });
                     }
                     if (ctx.reqdata.post) |post_data| {
@@ -109,9 +112,9 @@ pub fn serve(z: *zWSGI) !void {
 }
 
 pub const zWSGIRequest = struct {
-    header: uProtoHeader,
-    acpt: net.Server.Connection,
-    vars: []uWSGIVar,
+    acpt: *net.Server.Connection,
+    header: uProtoHeader = uProtoHeader{},
+    vars: []uWSGIVar = &[0]uWSGIVar{},
     body: ?[]u8 = null,
 };
 
@@ -181,77 +184,13 @@ fn findOr(list: []uWSGIVar, search: []const u8) []const u8 {
     return find(list, search) orelse "[missing]";
 }
 
-pub fn buildVerse(a: Allocator, request: *Request) !Verse {
-    var post_data: ?RequestData.PostData = null;
-    var reqdata: RequestData = undefined;
-    switch (request.raw_request) {
-        .zwsgi => |zreq| {
-            if (find(zreq.vars, "HTTP_CONTENT_LENGTH")) |h_len| {
-                const h_type = findOr(zreq.vars, "HTTP_CONTENT_TYPE");
-
-                const post_size = try std.fmt.parseInt(usize, h_len, 10);
-                if (post_size > 0) {
-                    var reader = zreq.acpt.stream.reader().any();
-                    post_data = try RequestData.readBody(a, &reader, post_size, h_type);
-                    log.debug(
-                        "post data \"{s}\" {{{any}}}",
-                        .{ post_data.?.rawpost, post_data.?.rawpost },
-                    );
-
-                    for (post_data.?.items) |itm| {
-                        log.debug("{}", .{itm});
-                    }
-                }
-            }
-
-            var query: RequestData.QueryData = undefined;
-            if (find(zreq.vars, "QUERY_STRING")) |qs| {
-                query = try RequestData.readQuery(a, qs);
-            }
-            reqdata = RequestData{
-                .post = post_data,
-                .query = query,
-            };
-        },
-        .http => |hreq| {
-            if (hreq.head.content_length) |h_len| {
-                if (h_len > 0) {
-                    const h_type = hreq.head.content_type orelse "text/plain";
-                    var reader = try hreq.reader();
-                    post_data = try RequestData.readBody(a, &reader, h_len, h_type);
-                    log.debug(
-                        "post data \"{s}\" {{{any}}}",
-                        .{ post_data.?.rawpost, post_data.?.rawpost },
-                    );
-
-                    for (post_data.?.items) |itm| {
-                        log.debug("{}", .{itm});
-                    }
-                }
-            }
-
-            var query_data: RequestData.QueryData = undefined;
-            if (std.mem.indexOf(u8, hreq.head.target, "/")) |i| {
-                query_data = try RequestData.readQuery(a, hreq.head.target[i..]);
-            }
-            reqdata = RequestData{
-                .post = post_data,
-                .query = query_data,
-            };
-        },
-    }
-
-    const response = try Response.init(a, request);
-    return Verse.init(a, request.*, response, reqdata);
-}
-
-fn readuWSGIHeader(a: Allocator, acpt: net.Server.Connection) !Request {
+fn readHeader(a: Allocator, conn: *net.Server.Connection) !zWSGIRequest {
     var uwsgi_header = uProtoHeader{};
     var ptr: [*]u8 = @ptrCast(&uwsgi_header);
-    _ = try acpt.stream.read(@alignCast(ptr[0..4]));
+    _ = try conn.stream.read(@alignCast(ptr[0..4]));
 
     const buf: []u8 = try a.alloc(u8, uwsgi_header.size);
-    const read = try acpt.stream.read(buf);
+    const read = try conn.stream.read(buf);
     if (read != uwsgi_header.size) {
         std.log.err("unexpected read size {} {}", .{ read, uwsgi_header.size });
     }
@@ -261,18 +200,44 @@ fn readuWSGIHeader(a: Allocator, acpt: net.Server.Connection) !Request {
         log.debug("{}", .{v});
     }
 
-    return try Request.init(
-        a,
-        zWSGIRequest{
-            .header = uwsgi_header,
-            .acpt = acpt,
-            .vars = vars,
-        },
-    );
+    return .{
+        .acpt = conn,
+        .header = uwsgi_header,
+        .vars = vars,
+    };
 }
 
-fn buildVerseuWSGI(a: Allocator, conn: *net.Server.Connection) !Verse {
-    var request = try readuWSGIHeader(a, conn.*);
+fn buildVerse(a: Allocator, req: *Request) !Verse {
+    var post_data: ?RequestData.PostData = null;
+    var reqdata: RequestData = undefined;
 
-    return buildVerse(a, &request);
+    if (find(req.raw.zwsgi.vars, "HTTP_CONTENT_LENGTH")) |h_len| {
+        const h_type = findOr(req.raw.zwsgi.vars, "HTTP_CONTENT_TYPE");
+
+        const post_size = try std.fmt.parseInt(usize, h_len, 10);
+        if (post_size > 0) {
+            var reader = req.raw.zwsgi.acpt.stream.reader().any();
+            post_data = try RequestData.readBody(a, &reader, post_size, h_type);
+            log.debug(
+                "post data \"{s}\" {{{any}}}",
+                .{ post_data.?.rawpost, post_data.?.rawpost },
+            );
+
+            for (post_data.?.items) |itm| {
+                log.debug("{}", .{itm});
+            }
+        }
+    }
+
+    var query: RequestData.QueryData = undefined;
+    if (find(req.raw.zwsgi.vars, "QUERY_STRING")) |qs| {
+        query = try RequestData.readQuery(a, qs);
+    }
+    reqdata = RequestData{
+        .post = post_data,
+        .query = query,
+    };
+
+    const response = try Response.init(a, req);
+    return Verse.init(a, req, response, reqdata);
 }

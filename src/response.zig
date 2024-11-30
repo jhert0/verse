@@ -48,11 +48,11 @@ downstream: union(Downstream) {
 },
 status: ?std.http.Status = null,
 
-pub fn init(a: Allocator, req: *Request) !Response {
+pub fn init(a: Allocator, req: *const Request) !Response {
     var res = Response{
         //.alloc = a,
         .headers = Headers.init(a),
-        .http_response = switch (req.raw_request) {
+        .http_response = switch (req.raw) {
             .zwsgi => null,
             .http => |h| h.*.respondStreaming(.{
                 .send_buffer = try a.alloc(u8, 0xffff),
@@ -62,8 +62,8 @@ pub fn init(a: Allocator, req: *Request) !Response {
                 },
             }),
         },
-        .downstream = switch (req.raw_request) {
-            .zwsgi => |*z| .{ .zwsgi = z.acpt.stream.writer() },
+        .downstream = switch (req.raw) {
+            .zwsgi => |z| .{ .zwsgi = z.*.acpt.stream.writer() },
             .http => .{ .http = undefined },
         },
     };

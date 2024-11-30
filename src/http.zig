@@ -49,14 +49,15 @@ pub fn serve(http: *HTTP) !void {
         const a = arena.allocator();
 
         var hreq = try hsrv.receiveHead();
-
-        var ctx = try buildVerse(a, &hreq);
+        var req = try Request.init(a, &hreq);
         var ipbuf: [0x20]u8 = undefined;
         const ipport = try std.fmt.bufPrint(&ipbuf, "{}", .{conn.address});
         if (std.mem.indexOfScalar(u8, ipport, ':')) |i| {
-            try ctx.request.addHeader("REMOTE_ADDR", ipport[0..i]);
-            try ctx.request.addHeader("REMOTE_PORT", ipport[i + 1 ..]);
+            try req.addHeader("REMOTE_ADDR", ipport[0..i]);
+            try req.addHeader("REMOTE_PORT", ipport[i + 1 ..]);
         } else unreachable;
+
+        var ctx = try buildVerse(a, &req);
 
         const callable = try http.router.routefn(&ctx);
         http.router.buildfn(&ctx, callable) catch |err| {
@@ -88,8 +89,9 @@ pub fn serve(http: *HTTP) !void {
                 error.DataMissing,
                 => {
                     log.err("Abusive {} because {}\n", .{ ctx.request, err });
-                    for (ctx.request.raw_request.zwsgi.vars) |vars| {
-                        log.err("Abusive var '{s}' => '''{s}'''\n", .{ vars.key, vars.val });
+                    var itr = ctx.request.raw.http.iterateHeaders();
+                    while (itr.next()) |vars| {
+                        log.err("Abusive var '{s}' => '''{s}'''\n", .{ vars.name, vars.value });
                     }
                 },
             }
@@ -98,23 +100,41 @@ pub fn serve(http: *HTTP) !void {
     unreachable;
 }
 
-fn readHttpHeaders(a: Allocator, req: *std.http.Server.Request) !Request {
-    //const vars = try readVars(a, buf);
-
-    var itr_headers = req.iterateHeaders();
+fn buildVerse(a: Allocator, req: *Request) !Verse {
+    var itr_headers = req.raw.http.iterateHeaders();
     while (itr_headers.next()) |header| {
         log.debug("http header => {s} -> {s}\n", .{ header.name, header.value });
         log.debug("{}", .{header});
     }
+    log.debug("http target -> {s}\n", .{req.uri});
+    var post_data: ?RequestData.PostData = null;
+    var reqdata: RequestData = undefined;
 
-    return try Request.init(a, req);
-}
+    if (req.raw.http.head.content_length) |h_len| {
+        if (h_len > 0) {
+            const h_type = req.raw.http.head.content_type orelse "text/plain";
+            var reader = try req.raw.http.reader();
+            post_data = try RequestData.readBody(a, &reader, h_len, h_type);
+            log.debug(
+                "post data \"{s}\" {{{any}}}",
+                .{ post_data.?.rawpost, post_data.?.rawpost },
+            );
 
-// TODO refactor
-const zwsgi = @import("zwsgi.zig");
+            for (post_data.?.items) |itm| {
+                log.debug("{}", .{itm});
+            }
+        }
+    }
 
-fn buildVerse(a: Allocator, req: *std.http.Server.Request) !Verse {
-    var request = try readHttpHeaders(a, req);
-    log.debug("http target -> {s}\n", .{request.uri});
-    return zwsgi.buildVerse(a, &request);
+    var query_data: RequestData.QueryData = undefined;
+    if (std.mem.indexOf(u8, req.raw.http.head.target, "/")) |i| {
+        query_data = try RequestData.readQuery(a, req.raw.http.head.target[i..]);
+    }
+    reqdata = RequestData{
+        .post = post_data,
+        .query = query_data,
+    };
+
+    const response = try Response.init(a, req);
+    return Verse.init(a, req, response, reqdata);
 }
