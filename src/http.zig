@@ -62,7 +62,7 @@ pub fn serve(http: *HTTP) !void {
         const callable = try http.router.routefn(&ctx);
         http.router.buildfn(&ctx, callable) catch |err| {
             switch (err) {
-                error.NetworkCrash => std.debug.print("client disconnect'\n", .{}),
+                error.NetworkCrash => log.warn("client disconnect", .{}),
                 error.Unrouteable => {
                     log.err("Unrouteable", .{});
                     if (@errorReturnTrace()) |trace| {
