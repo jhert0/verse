@@ -12,15 +12,29 @@ const StaticFile = @import("static-file.zig");
 pub const Errors = @import("errors.zig");
 pub const Error = Errors.ServerError || Errors.ClientError || Errors.NetworkError;
 
-pub const RouteFn = *const fn (*Verse) Error!BuildFn;
+/// The default page generator, this is the function that will be called, and
+/// expected to write the page data back to the client.
 pub const BuildFn = *const fn (*Verse) Error!void;
-pub const PrepareFn = *const fn (*Verse, BuildFn) Error!void;
+/// Similar to RouteFn and RouterFn above, Verse requires all page build steps
+/// to finish cleanly. While a default is provided. It's strongly recommended
+/// that a custom builder function be provided when custom error handling is
+/// desired.
+pub const BuilderFn = *const fn (*Verse, BuildFn) void;
+
+/// Route Functions are allowed to return errors for select cases where
+/// backtracking through the routing system might be useful. This in an
+/// exercise left to the caller, as eventually a sever default server error page
+/// will need to be returned.
+pub const RouteFn = *const fn (*Verse) Error!BuildFn;
+/// The provided RouteFn will be wrapped with a default error provider that will
+/// return a default BuildFn.
+pub const RouterFn = *const fn (*Verse, RouteFn) BuildFn;
 
 pub const Router = @This();
 
+builderfn: BuilderFn = defaultBuilder,
 routefn: RouteFn,
-// TODO better naming
-buildfn: PrepareFn = basePrepare,
+routerfn: RouterFn = defaultRouter,
 
 /// Methods is a struct so bitwise or will work as expected
 pub const Methods = packed struct {
@@ -45,11 +59,6 @@ pub const Methods = packed struct {
             .TRACE => self.TRACE,
         };
     }
-};
-
-pub const Endpoint = struct {
-    builder: BuildFn,
-    methods: Methods = .{ .GET = true },
 };
 
 pub const Match = struct {
@@ -137,10 +146,11 @@ fn default(vrs: *Verse) Error!void {
     return vrs.sendRawSlice(index);
 }
 
-pub fn router(vrs: *Verse, comptime routes: []const Match) BuildFn {
+pub fn router(vrs: *Verse, comptime routes: []const Match) Error!BuildFn {
     const search = vrs.uri.peek() orelse {
+        // Calling router without a next URI is unsupported.
         log.warn("No endpoint found: URI is empty.", .{});
-        return notFound;
+        return error.Unrouteable;
     };
     inline for (routes) |ep| {
         if (eql(u8, search, ep.name)) {
@@ -166,38 +176,70 @@ pub fn router(vrs: *Verse, comptime routes: []const Match) BuildFn {
             }
         }
     }
-    return notFound;
+    return error.Unrouteable;
+}
+
+pub fn defaultBuilder(vrs: *Verse, build: BuildFn) void {
+    build(vrs) catch |err| {
+        switch (err) {
+            error.NoSpaceLeft,
+            error.OutOfMemory,
+            => @panic("OOM"),
+            error.NetworkCrash => log.warn("client disconnect", .{}),
+            error.Unrouteable => {
+                // Reaching an Unrouteable error here should be impossible as
+                // the router has decided the target endpoint is correct.
+                // However it's a vaild error in somecases. A non-default buildfn
+                // could provide a replacement default. But this does not.
+                log.err("Unrouteable", .{});
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                @panic("Unroutable");
+            },
+            error.NotImplemented,
+            error.Unknown,
+            => unreachable,
+            error.InvalidURI,
+            => log.err("Unexpected error '{}'\n", .{err}),
+            error.Abusive,
+            error.Unauthenticated,
+            error.BadData,
+            error.DataMissing,
+            => {
+                // BadData and DataMissing aren't likely to be abusive, but
+                // dumping the information is likely to help with debugging the
+                // error.
+                log.err("Abusive {} because {}\n", .{ vrs.request, err });
+                var itr = vrs.request.raw.http.iterateHeaders();
+                while (itr.next()) |vars| {
+                    log.err("Abusive var '{s}' => '''{s}'''\n", .{ vars.name, vars.value });
+                }
+            },
+        }
+    };
 }
 
 const root = [_]Match{
     ROUTE("", default),
 };
 
-pub fn basePrepare(vrs: *Verse, build: BuildFn) Error!void {
-    return build(vrs);
+pub fn defaultRouter(vrs: *Verse, routefn: RouteFn) BuildFn {
+    if (vrs.uri.peek()) |first| {
+        if (first.len > 0)
+            return routefn(vrs) catch router(vrs, &root) catch default;
+    }
+    return internalServerError;
 }
 
-pub fn baseRouter(vrs: *Verse) Error!void {
-    log.debug("baserouter {s}", .{vrs.uri.peek().?});
-    if (vrs.uri.peek()) |first| {
-        if (first.len > 0) {
-            const route: BuildFn = router(vrs, &root);
-            return route(vrs);
-        }
-    }
-    return default(vrs);
-}
+const root_with_static = root ++ [_]Match{
+    ROUTE("static", StaticFile.file),
+};
 
-const root_with_static = root ++
-    [_]Match{.{ .name = "static", .match = .{ .call = StaticFile.file } }};
-
-pub fn baseRouterHtml(vrs: *Verse) Error!void {
-    log.debug("baserouter {s}\n", .{vrs.uri.peek().?});
+pub fn defaultRouterHtml(vrs: *Verse, routefn: RouteFn) Error!void {
     if (vrs.uri.peek()) |first| {
-        if (first.len > 0) {
-            const route: BuildFn = router(vrs, &root_with_static);
-            return route(vrs);
-        }
+        if (first.len > 0)
+            return routefn(vrs) catch router(vrs, &root_with_static) catch default;
     }
-    return default(vrs);
+    return internalServerError;
 }

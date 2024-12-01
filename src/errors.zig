@@ -1,8 +1,6 @@
 pub const ServerError = error{
-    AndExit,
     OutOfMemory,
     NoSpaceLeft,
-    ReqResInvalid,
     NotImplemented,
     Unknown,
 };

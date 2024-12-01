@@ -56,10 +56,10 @@ pub fn serve(z: *zWSGI) !void {
 
         var zreq = try readHeader(a, &acpt);
         var request = try Request.init(a, &zreq);
-        var ctx = try buildVerse(a, &request);
+        var verse = try buildVerse(a, &request);
 
         defer {
-            const vars = ctx.request.raw.zwsgi.vars;
+            const vars = verse.request.raw.zwsgi.vars;
             log.err("zWSGI: [{d:.3}] {s} - {s}: {s} -- \"{s}\"", .{
                 @as(f64, @floatFromInt(timer.lap())) / 1000000.0,
                 findOr(vars, "REMOTE_ADDR"),
@@ -69,45 +69,8 @@ pub fn serve(z: *zWSGI) !void {
             });
         }
 
-        const callable = try z.router.routefn(&ctx);
-        z.router.buildfn(&ctx, callable) catch |err| {
-            switch (err) {
-                error.NetworkCrash => log.err("client disconnect", .{}),
-                error.Unrouteable => {
-                    log.err("Unrouteable", .{});
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
-                },
-                error.NotImplemented,
-                error.Unknown,
-                error.ReqResInvalid,
-                error.AndExit,
-                error.NoSpaceLeft,
-                => {
-                    log.err("Unexpected error '{}'", .{err});
-                    return err;
-                },
-                error.InvalidURI => unreachable,
-                error.OutOfMemory => {
-                    log.err("Out of memory at '{}'", .{arena.queryCapacity()});
-                    return err;
-                },
-                error.Abusive,
-                error.Unauthenticated,
-                error.BadData,
-                error.DataMissing,
-                => {
-                    log.err("Abusive {} because {}", .{ ctx.request, err });
-                    for (ctx.request.raw.zwsgi.vars) |vars| {
-                        log.err("Abusive var '{s}' => '''{s}'''", .{ vars.key, vars.val });
-                    }
-                    if (ctx.reqdata.post) |post_data| {
-                        log.err("post data => '''{s}'''", .{post_data.rawpost});
-                    }
-                },
-            }
-        };
+        const callable = z.router.routerfn(&verse, z.router.routefn);
+        z.router.builderfn(&verse, callable);
     }
 }
 

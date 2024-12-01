@@ -57,45 +57,10 @@ pub fn serve(http: *HTTP) !void {
             try req.addHeader("REMOTE_PORT", ipport[i + 1 ..]);
         } else unreachable;
 
-        var ctx = try buildVerse(a, &req);
+        var verse = try buildVerse(a, &req);
 
-        const callable = try http.router.routefn(&ctx);
-        http.router.buildfn(&ctx, callable) catch |err| {
-            switch (err) {
-                error.NetworkCrash => log.warn("client disconnect", .{}),
-                error.Unrouteable => {
-                    log.err("Unrouteable", .{});
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
-                },
-                error.NotImplemented,
-                error.Unknown,
-                error.ReqResInvalid,
-                error.AndExit,
-                error.NoSpaceLeft,
-                => {
-                    log.err("Unexpected error '{}'\n", .{err});
-                    return err;
-                },
-                error.InvalidURI => unreachable,
-                error.OutOfMemory => {
-                    log.err("Out of memory at '{}'\n", .{arena.queryCapacity()});
-                    return err;
-                },
-                error.Abusive,
-                error.Unauthenticated,
-                error.BadData,
-                error.DataMissing,
-                => {
-                    log.err("Abusive {} because {}\n", .{ ctx.request, err });
-                    var itr = ctx.request.raw.http.iterateHeaders();
-                    while (itr.next()) |vars| {
-                        log.err("Abusive var '{s}' => '''{s}'''\n", .{ vars.name, vars.value });
-                    }
-                },
-            }
-        };
+        const callable = http.router.routerfn(&verse, http.router.routefn);
+        http.router.builderfn(&verse, callable);
     }
     unreachable;
 }
