@@ -2,6 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.Verse);
 const net = std.net;
+const siginfo_t = std.posix.siginfo_t;
+const SIG = std.posix.SIG;
+const SA = std.posix.SA;
 
 const Verse = @import("verse.zig");
 const Request = @import("request.zig");
@@ -13,10 +16,12 @@ pub const zWSGI = @This();
 
 alloc: Allocator,
 unix_file: []const u8,
+options: Options,
 router: Router,
 
 pub const Options = struct {
     file: []const u8 = "./zwsgi_file.sock",
+    chmod: ?std.posix.mode_t = null,
 };
 
 pub fn init(a: Allocator, opts: Options, router: Router) zWSGI {
@@ -24,26 +29,57 @@ pub fn init(a: Allocator, opts: Options, router: Router) zWSGI {
         .alloc = a,
         .unix_file = opts.file,
         .router = router,
+        .options = opts,
     };
 }
+
+var running: bool = true;
 
 pub fn serve(z: *zWSGI) !void {
     var cwd = std.fs.cwd();
     if (cwd.access(z.unix_file, .{})) {
-        try cwd.deleteFile(z.unix_file);
-    } else |_| {}
+        log.warn("File {s} already exists, zwsgi can not start.", .{z.unix_file});
+        return error.FileExists;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => {
+            log.err("Unexpected error during zwsgi startup {}", .{err});
+            return err;
+        },
+    }
+
+    defer cwd.deleteFile(z.unix_file) catch |err| {
+        log.err(
+            "Unable to delete file {s} during cleanup ({}this is unrecoverable)",
+            .{ z.unix_file, err },
+        );
+        @panic("Cleanup failed");
+    };
+
+    signalListen(SIG.INT) catch {
+        log.err("Unable to install sigint handler", .{});
+        return error.Unexpected;
+    };
 
     const uaddr = try std.net.Address.initUnix(z.unix_file);
     var server = try uaddr.listen(.{});
     defer server.deinit();
 
-    const path = try std.fs.cwd().realpathAlloc(z.alloc, z.unix_file);
-    defer z.alloc.free(path);
-    const zpath = try z.alloc.dupeZ(u8, path);
-    defer z.alloc.free(zpath);
+    if (z.options.chmod) |cmod| {
+        var b: [2048:0]u8 = undefined;
+        const path = try cwd.realpath(z.unix_file, b[0..]);
+        const zpath = try z.alloc.dupeZ(u8, path);
+        defer z.alloc.free(zpath);
+        _ = std.os.linux.chmod(zpath, cmod);
+    }
     log.warn("Unix server listening", .{});
 
-    while (true) {
+    while (running) {
+        var pollfds = [1]std.os.linux.pollfd{
+            .{ .fd = server.stream.handle, .events = std.math.maxInt(i16), .revents = 0 },
+        };
+        const ready = try std.posix.poll(&pollfds, 100);
+        if (ready == 0) continue;
         var acpt = try server.accept();
         defer acpt.stream.close();
         var timer = try std.time.Timer.start();
@@ -70,6 +106,26 @@ pub fn serve(z: *zWSGI) !void {
         const callable = z.router.routerfn(&verse, z.router.routefn);
         z.router.builderfn(&verse, callable);
     }
+    log.debug("closing, and cleaning up", .{});
+}
+
+export fn sig_cb(sig: c_int, _: *const siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    switch (sig) {
+        std.posix.SIG.INT => {
+            running = false;
+            log.err("SIGINT received", .{});
+        },
+        // should be unreachable
+        else => @panic("Unexpected, or unimplemented signal recieved"),
+    }
+}
+
+fn signalListen(signal: u6) !void {
+    try std.posix.sigaction(signal, &std.posix.Sigaction{
+        .handler = .{ .sigaction = sig_cb },
+        .mask = std.posix.empty_sigset,
+        .flags = SA.SIGINFO,
+    }, null);
 }
 
 pub const zWSGIRequest = struct {
