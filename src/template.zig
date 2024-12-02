@@ -57,7 +57,7 @@ pub var dynamic: []const Template = undefined;
 fn loadDynamicTemplates(a: Allocator, path: []const u8) !void {
     var cwd = std.fs.cwd();
     var idir = cwd.openDir(path, .{ .iterate = true }) catch |err| {
-        log.warn("Unable to build dynamic templates ({})\n", .{err});
+        log.warn("Unable to build dynamic templates ({})", .{err});
         return;
     };
     defer idir.close();
