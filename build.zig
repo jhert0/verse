@@ -86,7 +86,7 @@ pub const Compiler = struct {
     fn buildList(b: *std.Build, srcdir: []const u8) !std.ArrayList([]const u8) {
         var cwd = std.fs.cwd();
         var idir = cwd.openDir(srcdir, .{ .iterate = true }) catch |err| {
-            std.debug.print("template build error {}", .{err});
+            std.debug.print("template build error {} for srcdir {s}\n", .{ err, srcdir });
             return err;
         };
         var list = std.ArrayList([]const u8).init(b.allocator);
