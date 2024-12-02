@@ -224,7 +224,7 @@ const root = [_]Match{
     ROUTE("", default),
 };
 
-pub fn defaultRouter(vrs: *Verse, routefn: RouteFn) BuildFn {
+fn defaultRouter(vrs: *Verse, routefn: RouteFn) BuildFn {
     if (vrs.uri.peek()) |first| {
         if (first.len > 0)
             return routefn(vrs) catch router(vrs, &root) catch default;
@@ -236,7 +236,7 @@ const root_with_static = root ++ [_]Match{
     ROUTE("static", StaticFile.file),
 };
 
-pub fn defaultRouterHtml(vrs: *Verse, routefn: RouteFn) Error!void {
+fn defaultRouterHtml(vrs: *Verse, routefn: RouteFn) Error!void {
     if (vrs.uri.peek()) |first| {
         if (first.len > 0)
             return routefn(vrs) catch router(vrs, &root_with_static) catch default;

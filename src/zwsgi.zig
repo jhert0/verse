@@ -41,9 +41,7 @@ pub fn serve(z: *zWSGI) !void {
     defer z.alloc.free(path);
     const zpath = try z.alloc.dupeZ(u8, path);
     defer z.alloc.free(zpath);
-    const mode = std.os.linux.chmod(zpath, 0o777);
-    if (false) std.debug.print("mode {o}\n", .{mode});
-    log.warn("Unix server listening\n", .{});
+    log.warn("Unix server listening", .{});
 
     while (true) {
         var acpt = try server.accept();
