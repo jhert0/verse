@@ -225,9 +225,8 @@ const root = [_]Match{
 };
 
 fn defaultRouter(vrs: *Verse, routefn: RouteFn) BuildFn {
-    if (vrs.uri.peek()) |first| {
-        if (first.len > 0)
-            return routefn(vrs) catch router(vrs, &root) catch default;
+    if (vrs.uri.peek()) |_| {
+        return routefn(vrs) catch router(vrs, &root) catch default;
     }
     return internalServerError;
 }
