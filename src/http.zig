@@ -34,7 +34,8 @@ pub fn init(a: Allocator, opts: Options, router: Router) !HTTP {
 pub fn serve(http: *HTTP) !void {
     var srv = try http.listen_addr.listen(.{ .reuse_address = true });
     defer srv.deinit();
-    log.warn("HTTP Server listening", .{});
+
+    log.warn("HTTP Server listening on port: {any}", .{http.listen_addr.getPort()});
 
     const request_buffer: []u8 = try http.alloc.alloc(u8, http.max_request_size);
     defer http.alloc.free(request_buffer);
