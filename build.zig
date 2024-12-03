@@ -44,6 +44,8 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         });
+        // All Examples should compile for tests to pass
+        test_step.dependOn(&example_exe.step);
 
         example_exe.root_module.addImport("verse", module);
 
