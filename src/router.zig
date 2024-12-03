@@ -64,9 +64,9 @@ pub const Methods = packed struct {
     }
 };
 
-/// The Verse router will scan through an array of Match'es looking for a given
-/// name. Verse doesn't assert that the given name will match a director or
-/// endpoint/page specifically. e.g. `/uri/page` and `/uri/page/` will both
+/// The Verse router will scan through an array of Match structs looking for a
+/// given name. Verse doesn't assert that the given name will match a director
+/// or endpoint/page specifically. e.g. `/uri/page` and `/uri/page/` will both
 /// match to the first identical name, regardless if the matched type is a build
 /// function, or a route function.
 ///
@@ -222,8 +222,8 @@ pub fn router(vrs: *Verse, comptime routes: []const Match) Error!BuildFn {
 /// an endpoint might generate. Pages are permitted to return an error, and the
 /// page builder is required to handle all errors, and make a final decision.
 /// Ideally it should also be able to return a response to the user, but that
-/// implementation detail is left to the caller. This default builder is provide
-/// which can handle an abbreviated number of the errors.
+/// implementation detail is left to the caller. This default builder is
+/// provided and handles an abbreviated set of errors.
 pub fn defaultBuilder(vrs: *Verse, build: BuildFn) void {
     build(vrs) catch |err| {
         switch (err) {
