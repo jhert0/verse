@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const module = b.addModule("verse", .{
@@ -8,7 +8,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    _ = module;
 
     const t_compiler = b.addExecutable(.{
         .name = "template-compiler",
@@ -35,6 +34,31 @@ pub fn build(b: *std.Build) void {
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+
+    const examples = [_][]const u8{"basic"};
+    for (examples) |example| {
+        const path = try std.fmt.allocPrint(b.allocator, "examples/{s}.zig", .{example});
+        const example_exe = b.addExecutable(.{
+            .name = example,
+            .root_source_file = b.path(path),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        example_exe.root_module.addImport("verse", module);
+
+        const run_example = b.addRunArtifact(example_exe);
+        run_example.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            run_example.addArgs(args);
+        }
+
+        const run_name = try std.fmt.allocPrint(b.allocator, "run-{s}", .{example});
+        const run_description = try std.fmt.allocPrint(b.allocator, "Run example: {s}", .{example});
+        const run_step = b.step(run_name, run_description);
+        run_step.dependOn(&run_example.step);
+    }
 }
 
 pub const Compiler = struct {
