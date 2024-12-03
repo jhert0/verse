@@ -20,7 +20,7 @@ max_request_size: usize = 0xffff,
 
 pub const Options = struct {
     host: []const u8 = "127.0.0.1",
-    port: u16 = 80,
+    port: u16 = 8080,
 };
 
 pub fn init(a: Allocator, opts: Options, router: Router) !HTTP {
