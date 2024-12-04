@@ -94,9 +94,10 @@ pub const Jar = struct {
 
     /// Creates a new jar.
     pub fn init(a: std.mem.Allocator) !Jar {
+        const cookies = try ArrayListUnmanaged(Cookie).initCapacity(a, 8);
         return .{
             .alloc = a,
-            .cookies = ArrayListUnmanaged(Cookie){},
+            .cookies = cookies,
         };
     }
 
