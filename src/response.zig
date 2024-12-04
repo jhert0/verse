@@ -37,7 +37,7 @@ const Error = error{
 
 pub const Writer = std.io.Writer(*Response, Error, write);
 
-headers: ?Headers = null,
+headers: Headers,
 tranfer_mode: TransferMode = .static,
 // This is just bad code, but I need to give the sane implementation more thought
 http_response: ?std.http.Server.Response = null,
@@ -79,13 +79,10 @@ fn headersInit(res: *Response) !void {
 }
 
 pub fn headersAdd(res: *Response, comptime name: []const u8, value: []const u8) !void {
-    if (res.headers) |*headers| {
-        try headers.add(name, value);
-    } else return Error.HeadersFinished;
+    try res.headers.add(name, value);
 }
 
 pub fn start(res: *Response) !void {
-    if (res.headers == null) return Error.WrongPhase;
     if (res.status == null) res.status = .ok;
     switch (res.downstream) {
         .http => {
@@ -117,27 +114,22 @@ pub fn sendHeaders(res: *Response) !void {
     switch (res.downstream) {
         .http => try res.http_response.?.flush(),
         .zwsgi, .buffer => {
-            if (res.headers) |*headers| {
-                try res.sendHTTPHeader();
-                var itr = headers.index.iterator();
-                while (itr.next()) |header| {
-                    var buf: [512]u8 = undefined;
-                    const b = try std.fmt.bufPrint(&buf, "{s}: {s}\r\n", .{
-                        header.key_ptr.*,
-                        header.value_ptr.str,
-                    });
-                    _ = try res.write(b);
-                }
-                _ = try res.write("Transfer-Encoding: chunked\r\n");
-            } else return error.WrongPhase;
+            try res.sendHTTPHeader();
+            var itr = res.headers.headers.iterator();
+            while (itr.next()) |header| {
+                var buf: [512]u8 = undefined;
+                const b = try std.fmt.bufPrint(&buf, "{s}: {s}\r\n", .{
+                    header.key_ptr.*,
+                    header.value_ptr.*.value,
+                });
+                _ = try res.write(b);
+            }
+            _ = try res.write("Transfer-Encoding: chunked\r\n");
         },
     }
-    res.headers = null;
 }
 
 pub fn redirect(res: *Response, loc: []const u8, see_other: bool) !void {
-    if (res.headers == null) return error.WrongPhase;
-
     try res.writeAll("HTTP/1.1 ");
     if (see_other) {
         try res.writeAll("303 See Other\r\n");
@@ -153,7 +145,6 @@ pub fn redirect(res: *Response, loc: []const u8, see_other: bool) !void {
 /// Do not use
 /// TODO remove
 pub fn send(res: *Response, data: []const u8) !void {
-    if (res.headers != null) try res.start();
     try res.writeAll(data);
     return res.finish();
 }

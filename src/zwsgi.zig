@@ -89,7 +89,7 @@ pub fn serve(z: *zWSGI) !void {
         const a = arena.allocator();
 
         var zreq = try readHeader(a, &acpt);
-        var request = try Request.init(a, &zreq);
+        var request = try Request.initZWSGI(a, &zreq);
         var verse = try buildVerse(a, &request);
 
         defer {

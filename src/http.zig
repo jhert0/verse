@@ -50,7 +50,7 @@ pub fn serve(http: *HTTP) !void {
         const a = arena.allocator();
 
         var hreq = try hsrv.receiveHead();
-        var req = try Request.init(a, &hreq);
+        var req = try Request.initHttp(a, &hreq);
         var ipbuf: [0x20]u8 = undefined;
         const ipport = try std.fmt.bufPrint(&ipbuf, "{}", .{conn.address});
         if (std.mem.indexOfScalar(u8, ipport, ':')) |i| {
@@ -69,10 +69,10 @@ pub fn serve(http: *HTTP) !void {
 fn buildVerse(a: Allocator, req: *Request) !Verse {
     var itr_headers = req.raw.http.iterateHeaders();
     while (itr_headers.next()) |header| {
-        log.debug("http header => {s} -> {s}\n", .{ header.name, header.value });
+        log.debug("http header => {s} -> {s}", .{ header.name, header.value });
         log.debug("{}", .{header});
     }
-    log.debug("http target -> {s}\n", .{req.uri});
+    log.debug("http target -> {s}", .{req.uri});
     var post_data: ?RequestData.PostData = null;
     var reqdata: RequestData = undefined;
 

@@ -1,7 +1,13 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const eql = std.mem.eql;
 const fmt = std.fmt;
+const indexOf = std.mem.indexOf;
+const indexOfScalar = std.mem.indexOfScalar;
+const splitSequence = std.mem.splitSequence;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+const Headers = @import("headers.zig");
 
 pub const Attributes = struct {
     domain: ?[]const u8 = null,
@@ -12,19 +18,12 @@ pub const Attributes = struct {
     max_age: ?i64 = null,
     expires: ?i64 = null,
     same_site: ?SameSite = null,
-    // Cookie state metadata.
-    source: enum { server, client, nos } = .nos,
 
     pub const SameSite = enum {
         strict,
         lax,
         none,
     };
-
-    /// Warning, not implemented!
-    pub fn fromHeader(_: []const u8) Attributes {
-        return .{};
-    }
 
     pub fn format(a: Attributes, comptime _: []const u8, _: fmt.FormatOptions, w: anytype) !void {
         if (a.domain) |d|
@@ -51,12 +50,16 @@ pub const Cookie = struct {
     name: []const u8,
     value: []const u8,
     attr: Attributes = .{},
+    // Cookie state metadata.
+    source: enum { server, client, nos } = .nos,
 
-    pub fn fromHeader(str: []const u8) Cookie {
+    pub fn fromHeader(cookie: []const u8) Cookie {
+        const split = indexOfScalar(u8, cookie, '=') orelse cookie.len - 1;
         return .{
-            .name = str[0..10],
-            .value = str[10..20],
-            .attr = Attributes.fromHeader(str[20..]),
+            .name = cookie[0..split],
+            .value = cookie[split + 1 ..],
+            .source = .client,
+            .attr = .{},
         };
     }
 
@@ -89,16 +92,34 @@ test Cookie {
 }
 
 pub const Jar = struct {
-    alloc: std.mem.Allocator,
+    alloc: Allocator,
     cookies: ArrayListUnmanaged(Cookie),
 
     /// Creates a new jar.
-    pub fn init(a: std.mem.Allocator) !Jar {
+    pub fn init(a: Allocator) !Jar {
         const cookies = try ArrayListUnmanaged(Cookie).initCapacity(a, 8);
         return .{
             .alloc = a,
             .cookies = cookies,
         };
+    }
+
+    pub fn initFromHeaders(a: Allocator, headers: *Headers) !Jar {
+        var jar = try init(a);
+        var itr = headers.iterator();
+        while (itr.next()) |header| {
+            // TODO we should probably use ASCII case equal here but it's not
+            // implemented that way because it might be better to normalize the
+            // incoming header names at the edge.
+            if (eql(u8, header.name, "Cookie")) {
+                var cookies = splitSequence(u8, header.value, "; ");
+                while (cookies.next()) |cookie| {
+                    try jar.add(Cookie.fromHeader(cookie));
+                }
+            }
+        }
+
+        return jar;
     }
 
     pub fn raze(jar: *Jar) void {

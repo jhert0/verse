@@ -35,7 +35,10 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    const examples = [_][]const u8{"basic"};
+    const examples = [_][]const u8{
+        "basic",
+        "cookies",
+    };
     for (examples) |example| {
         const path = try std.fmt.allocPrint(b.allocator, "examples/{s}.zig", .{example});
         const example_exe = b.addExecutable(.{
