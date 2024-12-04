@@ -19,7 +19,9 @@ pub fn valid(a: Auth) bool {
     return a.provider.valid() catch false;
 }
 
-pub fn requireValid(a: Auth) Error!void {
+/// Unauthenticated is the only error this is able to return as the correct
+/// definition for an HTTP 401
+pub fn requireValid(a: Auth) error{Unauthenticated}!void {
     if (a.current_user == null or !a.valid()) return error.Unauthenticated;
 }
 
