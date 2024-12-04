@@ -51,12 +51,6 @@ pub fn serve(http: *HTTP) !void {
 
         var hreq = try hsrv.receiveHead();
         var req = try Request.initHttp(a, &hreq);
-        var ipbuf: [0x20]u8 = undefined;
-        const ipport = try std.fmt.bufPrint(&ipbuf, "{}", .{conn.address});
-        if (std.mem.indexOfScalar(u8, ipport, ':')) |i| {
-            try req.addHeader("REMOTE_ADDR", ipport[0..i]);
-            try req.addHeader("REMOTE_PORT", ipport[i + 1 ..]);
-        } else unreachable;
 
         var verse = try buildVerse(a, &req);
 
