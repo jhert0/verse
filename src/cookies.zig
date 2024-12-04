@@ -1,6 +1,7 @@
 const std = @import("std");
 const eql = std.mem.eql;
 const fmt = std.fmt;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 pub const Attributes = struct {
     domain: ?[]const u8 = null,
@@ -89,48 +90,63 @@ test Cookie {
 
 pub const Jar = struct {
     alloc: std.mem.Allocator,
-    cookies: []Cookie,
-    capacity: usize = 0,
+    cookies: ArrayListUnmanaged(Cookie),
 
+    /// Creates a new jar.
     pub fn init(a: std.mem.Allocator) !Jar {
-        var cookies = try a.alloc(Cookie, 8); // 8 aught to be enough for anyone! :D
-        cookies.len = 0;
         return .{
             .alloc = a,
-            .cookies = cookies,
-            .capacity = 8,
+            .cookies = ArrayListUnmanaged(Cookie){},
         };
     }
 
     pub fn raze(jar: *Jar) void {
-        jar.cookies.len = jar.capacity;
-        jar.alloc.free(jar.cookies);
+        jar.cookies.deinit(jar.alloc);
     }
 
-    /// Dummy function, not implemented
+    /// Adds a cookie to the jar.
     pub fn add(jar: *Jar, c: Cookie) !void {
-        std.debug.assert(jar.capacity > 0);
-        std.debug.assert(c.name.len == 10);
-        return;
+        try jar.cookies.append(jar.alloc, c);
     }
 
-    /// Dummy function, not implemented
+    /// Removes a cookie from the jar.
     pub fn remove(jar: *Jar, name: []const u8) ?Cookie {
         var found: ?Cookie = null;
-        for (jar.cookies, 0..) |cookie, i| {
+
+        for (jar.cookies.items, 0..) |cookie, i| {
             if (eql(u8, cookie.name, name)) {
-                found = cookie;
-                // TODO copy remaining backwards
-                _ = i;
+                found = jar.cookies.swapRemove(i);
             }
         }
+
         return found;
+    }
+
+    /// Reduces size of cookies to it's current length.
+    pub fn shrink(jar: *Jar) void {
+        jar.cookies.shrinkAndFree(jar.alloc, jar.cookies.len);
     }
 };
 
 test Jar {
     const a = std.testing.allocator;
     var j = try Jar.init(a);
-    try std.testing.expect(j.capacity == 8);
-    j.raze();
+    defer j.raze();
+
+    const cookies = [_]Cookie{
+        .{ .name = "cookie1", .value = "value" },
+        .{ .name = "cookie2", .value = "value", .attr = .{ .secure = true } },
+    };
+
+    for (cookies) |cookie| {
+        try j.add(cookie);
+    }
+
+    try std.testing.expectEqual(j.cookies.items.len, 2);
+
+    const removed = j.remove("cookie1");
+    try std.testing.expect(removed != null);
+    try std.testing.expectEqualStrings(removed.?.name, "cookie1");
+
+    try std.testing.expectEqual(j.cookies.items.len, 1);
 }
