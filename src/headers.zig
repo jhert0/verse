@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Headers = @This();
 
-const Header = struct {
+pub const Header = struct {
     name: []const u8,
     value: []const u8,
 };
@@ -109,6 +109,19 @@ pub const Iterator = struct {
         while (i.next()) |_| {}
     }
 };
+
+pub fn toSlice(h: Headers, a: Allocator) ![]Header {
+    var itr = h.iterator();
+    var count: usize = 0;
+    while (itr.next()) |_| count += 1;
+
+    const slice = try a.alloc(Header, count);
+    itr = h.iterator();
+    for (slice) |*s| {
+        s.* = itr.next() orelse unreachable;
+    }
+    return slice;
+}
 
 pub fn format(h: Headers, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
     _ = h;

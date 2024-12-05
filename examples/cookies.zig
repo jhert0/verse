@@ -4,6 +4,10 @@ const Router = Verse.Router;
 const BuildFn = Router.BuildFn;
 const print = std.fmt.bufPrint;
 
+const Cookie = Verse.Cookies.Cookie;
+var Random = std.Random.DefaultPrng.init(1337);
+var random = Random.random();
+
 const routes = [_]Router.Match{
     Router.GET("", index),
 };
@@ -28,6 +32,19 @@ fn route(verse: *Verse) Router.Error!BuildFn {
 fn index(verse: *Verse) Router.Error!void {
     var buffer: [2048]u8 = undefined;
     const found = try print(&buffer, "{} cookies found by the server\n", .{verse.request.cookie_jar.cookies.items.len});
+
+    const random_cookie = @tagName(random.enumValue(enum {
+        chocolate_chip,
+        sugar,
+        oatmeal,
+        peanut_butter,
+        ginger_snap,
+    }));
+
+    try verse.response.cookie_jar.add(Cookie{
+        .name = "best-flavor",
+        .value = random_cookie,
+    });
     try verse.quickStart();
     try verse.sendRawSlice(found);
 }

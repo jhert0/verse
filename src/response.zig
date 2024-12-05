@@ -1,6 +1,8 @@
 const std = @import("std");
+const bufPrint = std.fmt.bufPrint;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
+const Stream = std.net.Stream;
 
 const Request = @import("request.zig");
 const Headers = @import("headers.zig");
@@ -37,40 +39,40 @@ const Error = error{
 
 pub const Writer = std.io.Writer(*Response, Error, write);
 
+alloc: Allocator,
 headers: Headers,
 tranfer_mode: TransferMode = .static,
 // This is just bad code, but I need to give the sane implementation more thought
-http_response: ?std.http.Server.Response = null,
+stdhttp: struct {
+    request: ?*std.http.Server.Request = null,
+    response: ?std.http.Server.Response = null,
+} = .{},
 downstream: union(Downstream) {
-    buffer: std.io.BufferedWriter(ONESHOT_SIZE, std.net.Stream.Writer),
-    zwsgi: std.net.Stream.Writer,
+    buffer: std.io.BufferedWriter(ONESHOT_SIZE, Stream.Writer),
+    zwsgi: Stream.Writer,
     http: std.io.AnyWriter,
 },
 cookie_jar: Cookies.Jar,
 status: ?std.http.Status = null,
 
 pub fn init(a: Allocator, req: *const Request) !Response {
-    var res = Response{
+    var self = Response{
+        .alloc = a,
         .headers = Headers.init(a),
-        .http_response = switch (req.raw) {
-            .zwsgi => null,
-            .http => |h| h.*.respondStreaming(.{
-                .send_buffer = try a.alloc(u8, 0xffff),
-                .respond_options = .{
-                    .transfer_encoding = .chunked,
-                    .keep_alive = false,
-                },
-            }),
-        },
         .downstream = switch (req.raw) {
             .zwsgi => |z| .{ .zwsgi = z.*.acpt.stream.writer() },
             .http => .{ .http = undefined },
         },
         .cookie_jar = try Cookies.Jar.init(a),
     };
-    if (res.http_response) |*h| res.downstream.http = h.writer();
-    res.headersInit() catch @panic("unable to create Response obj");
-    return res;
+    switch (req.raw) {
+        .http => |h| {
+            self.stdhttp.request = h;
+        },
+        else => {},
+    }
+    self.headersInit() catch @panic("unable to create Response obj");
+    return self;
 }
 
 fn headersInit(res: *Response) !void {
@@ -84,15 +86,30 @@ pub fn headersAdd(res: *Response, comptime name: []const u8, value: []const u8) 
 
 pub fn start(res: *Response) !void {
     if (res.status == null) res.status = .ok;
+
     switch (res.downstream) {
         .http => {
+            res.stdhttp.response = res.stdhttp.request.?.*.respondStreaming(.{
+                .send_buffer = try res.alloc.alloc(u8, 0xffffff),
+                .respond_options = .{
+                    .transfer_encoding = .chunked,
+                    .keep_alive = false,
+                    .extra_headers = @ptrCast(try res.cookie_jar.toHeaderSlice(res.alloc)),
+                },
+            });
             // I don't know why/where the writer goes invalid, but I'll probably
             // fix it later?
-            if (res.http_response) |*h| res.downstream.http = h.writer();
+            if (res.stdhttp.response) |*h| res.downstream.http = h.writer();
             try res.sendHeaders();
         },
         else => {
             try res.sendHeaders();
+            for (res.cookie_jar.cookies.items) |cookie| {
+                var buffer: [1024]u8 = undefined;
+                const cookie_str = try bufPrint(&buffer, "{header}\r\n", .{cookie});
+                _ = try res.write(cookie_str);
+            }
+
             _ = try res.write("\r\n");
         },
     }
@@ -112,7 +129,7 @@ fn sendHTTPHeader(res: *Response) !void {
 
 pub fn sendHeaders(res: *Response) !void {
     switch (res.downstream) {
-        .http => try res.http_response.?.flush(),
+        .http => try res.stdhttp.response.?.flush(),
         .zwsgi, .buffer => {
             try res.sendHTTPHeader();
             var itr = res.headers.headers.iterator();
@@ -152,20 +169,20 @@ pub fn send(res: *Response, data: []const u8) !void {
 pub fn writer(res: *const Response) AnyWriter {
     return .{
         .writeFn = typeErasedWrite,
-        .context = res,
+        .context = @ptrCast(&res),
     };
 }
 
-pub fn writeChunk(res: *const Response, data: []const u8) !void {
+pub fn writeChunk(res: Response, data: []const u8) !void {
     comptime unreachable;
-    var size: [0xff]u8 = undefined;
-    const chunk = try std.fmt.bufPrint(&size, "{x}\r\n", .{data.len});
+    var size: [19]u8 = undefined;
+    const chunk = try bufPrint(&size, "{x}\r\n", .{data.len});
     try res.writeAll(chunk);
     try res.writeAll(data);
     try res.writeAll("\r\n");
 }
 
-pub fn writeAll(res: *const Response, data: []const u8) !void {
+pub fn writeAll(res: Response, data: []const u8) !void {
     var index: usize = 0;
     while (index < data.len) {
         index += try write(res, data[index..]);
@@ -173,23 +190,20 @@ pub fn writeAll(res: *const Response, data: []const u8) !void {
 }
 
 pub fn typeErasedWrite(opq: *const anyopaque, data: []const u8) anyerror!usize {
-    const cast: *const Response = @alignCast(@ptrCast(opq));
-    return try write(cast, data);
+    const ptr: *const Response = @alignCast(@ptrCast(opq));
+    return try write(ptr.*, data);
 }
 
 /// Raw writer, use with caution! To use phase checking, use send();
-pub fn write(res: *const Response, data: []const u8) !usize {
+pub fn write(res: Response, data: []const u8) !usize {
     return switch (res.downstream) {
         .zwsgi => |*w| try w.write(data),
         .http => |*w| return try w.write(data),
-        .buffer => {
-            var bff: *Response = @constCast(res);
-            return try bff.write(data);
-        },
+        .buffer => return try res.write(data),
     };
 }
 
-fn flush(res: *Response) !void {
+fn flush(res: Response) !void {
     switch (res.downstream) {
         .buffer => |*w| try w.flush(),
         .http => |*h| h.flush(),
@@ -200,9 +214,8 @@ fn flush(res: *Response) !void {
 pub fn finish(res: *Response) !void {
     switch (res.downstream) {
         .http => {
-            if (res.http_response) |*h| try h.endChunked(.{});
+            if (res.stdhttp.response) |*h| try h.endChunked(.{});
         },
-        //.zwsgi => |*w| _ = try w.write("0\r\n\r\n"),
         else => {},
     }
 }

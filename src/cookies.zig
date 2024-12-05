@@ -63,8 +63,11 @@ pub const Cookie = struct {
         };
     }
 
-    pub fn format(c: Cookie, comptime _: []const u8, _: fmt.FormatOptions, w: anytype) !void {
-        try w.print("Set-Cookie: {s}={s}{}", .{ c.name, c.value, c.attr });
+    pub fn format(c: Cookie, comptime fstr: []const u8, _: fmt.FormatOptions, w: anytype) !void {
+        if (comptime eql(u8, fstr, "header")) {
+            try w.writeAll("Set-Cookie: ");
+        }
+        try w.print("{s}={s}{}", .{ c.name, c.value, c.attr });
     }
 };
 
@@ -86,7 +89,7 @@ test Cookie {
     };
 
     for (expected, cookies) |expect, cookie| {
-        const res = try fmt.bufPrint(&buffer, "{}", .{cookie});
+        const res = try fmt.bufPrint(&buffer, "{header}", .{cookie});
         try std.testing.expectEqualStrings(expect, res);
     }
 }
@@ -142,6 +145,18 @@ pub const Jar = struct {
         }
 
         return found;
+    }
+
+    /// Caller owns the array, and each name and value string
+    pub fn toHeaderSlice(jar: *Jar, a: Allocator) ![]Headers.Header {
+        const slice = try a.alloc(Headers.Header, jar.cookies.items.len);
+        for (slice, jar.cookies.items) |*s, cookie| {
+            s.* = .{
+                .name = try a.dupe(u8, "Set-Cookie"),
+                .value = try fmt.allocPrint(a, "{}", .{cookie}),
+            };
+        }
+        return slice;
     }
 
     /// Reduces size of cookies to it's current length.

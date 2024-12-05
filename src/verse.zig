@@ -13,6 +13,7 @@ pub const Router = @import("router.zig");
 pub const UriIter = Router.UriIter;
 
 pub const Auth = @import("auth.zig");
+pub const Cookies = @import("cookies.zig");
 
 const Error = @import("errors.zig").Error;
 const NetworkError = @import("errors.zig").NetworkError;
@@ -76,13 +77,13 @@ pub fn sendRawSlice(vrs: *Verse, slice: []const u8) NetworkError!void {
 }
 
 /// Helper function to return a default error page for a given http status code.
-pub fn sendError(vrs: *Verse, comptime code: std.http.Status) NetworkError!void {
+pub fn sendError(vrs: *Verse, comptime code: std.http.Status) !void {
     return Router.defaultResponse(code)(vrs);
 }
 
 /// Takes a any object, that can be represented by json, converts it into a
 /// json string, and sends to the client.
-pub fn sendJSON(vrs: *Verse, json: anytype) NetworkError!void {
+pub fn sendJSON(vrs: *Verse, json: anytype) !void {
     try vrs.quickStart();
     const data = std.json.stringifyAlloc(vrs.alloc, json, .{
         .emit_null_optional_fields = false,
