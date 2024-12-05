@@ -15,6 +15,7 @@ pub const UriIter = Router.UriIter;
 pub const Auth = @import("auth.zig");
 
 const Error = @import("errors.zig").Error;
+const NetworkError = @import("errors.zig").NetworkError;
 
 pub const Verse = @This();
 
@@ -47,7 +48,9 @@ pub fn init(a: Allocator, req: *const Request, res: Response, reqdata: RequestDa
     };
 }
 
-pub fn sendPage(vrs: *Verse, page: anytype) Error!void {
+/// sendPage is the default way to respond in verse using the Template system.
+/// sendPage will flush headers to the client before sending Page data
+pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
     try vrs.quickStart();
     const loggedin = if (vrs.auth.valid()) "<a href=\"#\">Logged In</a>" else "Public";
     const T = @TypeOf(page.*);
@@ -61,16 +64,25 @@ pub fn sendPage(vrs: *Verse, page: anytype) Error!void {
     };
 }
 
-///
-pub fn sendRawSlice(vrs: *Verse, slice: []const u8) Error!void {
-    vrs.response.send(slice) catch return error.Unknown;
+/// sendRawSlice will allow you to send data directly to the client. It will not
+/// verify the current state, and will allow you to inject data into the HTTP
+/// headers. If you only want to send response body data, call quickStart() to
+/// send all headers to the client
+pub fn sendRawSlice(vrs: *Verse, slice: []const u8) NetworkError!void {
+    vrs.response.send(slice) catch |err| switch (err) {
+        error.BrokenPipe => |e| return e,
+        else => unreachable,
+    };
 }
 
-pub fn sendError(vrs: *Verse, comptime code: std.http.Status) Error!void {
+/// Helper function to return a default error page for a given http status code.
+pub fn sendError(vrs: *Verse, comptime code: std.http.Status) NetworkError!void {
     return Router.defaultResponse(code)(vrs);
 }
 
-pub fn sendJSON(vrs: *Verse, json: anytype) Error!void {
+/// Takes a any object, that can be represented by json, converts it into a
+/// json string, and sends to the client.
+pub fn sendJSON(vrs: *Verse, json: anytype) NetworkError!void {
     try vrs.quickStart();
     const data = std.json.stringifyAlloc(vrs.alloc, json, .{
         .emit_null_optional_fields = false,
@@ -78,14 +90,20 @@ pub fn sendJSON(vrs: *Verse, json: anytype) Error!void {
         log.err("Error trying to print json {}", .{err});
         return error.Unknown;
     };
-    vrs.response.writeAll(data) catch unreachable;
-    vrs.response.finish() catch unreachable;
+    vrs.response.writeAll(data) catch |err| switch (err) {
+        error.BrokenPipe => |e| return e,
+        else => unreachable,
+    };
+    vrs.response.finish() catch |err| switch (err) {
+        error.BrokenPipe => |e| return e,
+        else => unreachable,
+    };
 }
 
 /// This function may be removed in the future
-pub fn quickStart(vrs: *Verse) Error!void {
+pub fn quickStart(vrs: *Verse) NetworkError!void {
     vrs.response.start() catch |err| switch (err) {
-        error.BrokenPipe => return error.NetworkCrash,
+        error.BrokenPipe => |e| return e,
         else => unreachable,
     };
 }

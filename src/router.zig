@@ -230,7 +230,7 @@ pub fn defaultBuilder(vrs: *Verse, build: BuildFn) void {
             error.NoSpaceLeft,
             error.OutOfMemory,
             => @panic("OOM"),
-            error.NetworkCrash => log.warn("client disconnect", .{}),
+            error.BrokenPipe => log.warn("client disconnect", .{}),
             error.Unrouteable => {
                 // Reaching an Unrouteable error here should be impossible as
                 // the router has decided the target endpoint is correct.
@@ -244,9 +244,9 @@ pub fn defaultBuilder(vrs: *Verse, build: BuildFn) void {
             },
             error.NotImplemented,
             error.Unknown,
-            => unreachable, // This is an implementation error by the page. So
-            // we crash. If you've reached this, something is
-            // wrong with your site.
+            => unreachable,
+            // This is an implementation error by the page. So we crash. If
+            // you've reached this, something is wrong with your site.
             error.InvalidURI,
             => log.err("Unexpected error '{}'\n", .{err}),
             error.Abusive,

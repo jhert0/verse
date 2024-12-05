@@ -1,3 +1,5 @@
+/// Errors that indicate something is wrong with the host system verse is
+/// running ontop of.
 pub const ServerError = error{
     OutOfMemory,
     NoSpaceLeft,
@@ -5,6 +7,8 @@ pub const ServerError = error{
     Unknown,
 };
 
+/// Errors resulting from data from the client preventing verse, or an endpoint
+/// from returning a valid response.
 pub const ClientError = error{
     Abusive,
     BadData,
@@ -12,11 +16,13 @@ pub const ClientError = error{
     InvalidURI,
     Unauthenticated,
     Unrouteable,
-    NetworkCrash,
 };
 
+/// Networking or other IO errors.
 pub const NetworkError = error{
-    NetworkCrash,
+    /// Common and usually banal error when the client disconnects before the
+    /// full response is delivered.
+    BrokenPipe,
 };
 
 pub const Error = ServerError || ClientError || NetworkError;
