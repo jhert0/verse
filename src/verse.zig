@@ -191,6 +191,10 @@ pub fn sendError(vrs: *Verse, comptime code: std.http.Status) !void {
 /// Takes a any object, that can be represented by json, converts it into a
 /// json string, and sends to the client.
 pub fn sendJSON(vrs: *Verse, json: anytype, comptime code: std.http.Status) !void {
+    if (code == .no_content) {
+        @compileError("Sending JSON is not supported with status code no content");
+    }
+
     vrs.response.status = code;
     try vrs.quickStart();
     const data = std.json.stringifyAlloc(vrs.alloc, json, .{
