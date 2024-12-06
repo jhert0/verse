@@ -1,5 +1,6 @@
 pub const std = @import("std");
 const Allocator = std.mem.Allocator;
+const bufPrint = std.fmt.bufPrint;
 const splitScalar = std.mem.splitScalar;
 const log = std.log.scoped(.Verse);
 
@@ -47,6 +48,50 @@ pub fn init(a: Allocator, req: *const Request, res: Response, reqdata: RequestDa
             .provider = Auth.InvalidProvider.empty(),
         },
     };
+}
+
+fn sendHTTPHeader(vrs: *Verse) !void {
+    if (vrs.response.status == null) vrs.response.status = .ok;
+    switch (vrs.response.status.?) {
+        .ok => try vrs.response.writeAll("HTTP/1.1 200 OK\r\n"),
+        .found => try vrs.response.writeAll("HTTP/1.1 302 Found\r\n"),
+        .forbidden => try vrs.response.writeAll("HTTP/1.1 403 Forbidden\r\n"),
+        .not_found => try vrs.response.writeAll("HTTP/1.1 404 Not Found\r\n"),
+        .internal_server_error => try vrs.response.writeAll("HTTP/1.1 500 Internal Server Error\r\n"),
+        else => return error.UnknownStatus,
+    }
+}
+
+pub fn sendHeaders(vrs: *Verse) !void {
+    switch (vrs.response.downstream) {
+        .http => try vrs.response.stdhttp.response.?.flush(),
+        .zwsgi, .buffer => {
+            try vrs.sendHTTPHeader();
+            var itr = vrs.response.headers.headers.iterator();
+            while (itr.next()) |header| {
+                var buf: [512]u8 = undefined;
+                const b = try std.fmt.bufPrint(&buf, "{s}: {s}\r\n", .{
+                    header.key_ptr.*,
+                    header.value_ptr.*.value,
+                });
+                _ = try vrs.response.write(b);
+            }
+            _ = try vrs.response.write("Transfer-Encoding: chunked\r\n");
+        },
+    }
+}
+
+pub fn redirect(vrs: *Verse, loc: []const u8, see_other: bool) !void {
+    try vrs.response.writeAll("HTTP/1.1 ");
+    if (see_other) {
+        try vrs.response.writeAll("303 See Other\r\n");
+    } else {
+        try vrs.response.writeAll("302 Found\r\n");
+    }
+
+    try vrs.response.writeAll("Location: ");
+    try vrs.response.writeAll(loc);
+    try vrs.response.writeAll("\r\n\r\n");
 }
 
 /// sendPage is the default way to respond in verse using the Template system.
@@ -101,10 +146,49 @@ pub fn sendJSON(vrs: *Verse, json: anytype) !void {
 
 /// This function may be removed in the future
 pub fn quickStart(vrs: *Verse) NetworkError!void {
-    vrs.response.start() catch |err| switch (err) {
-        error.BrokenPipe => |e| return e,
-        else => unreachable,
-    };
+    if (vrs.response.status == null) vrs.response.status = .ok;
+
+    switch (vrs.response.downstream) {
+        .http => {
+            vrs.response.stdhttp.response = vrs.response.stdhttp.request.?.*.respondStreaming(.{
+                .send_buffer = vrs.response.alloc.alloc(u8, 0xffffff) catch unreachable,
+                .respond_options = .{
+                    .transfer_encoding = .chunked,
+                    .keep_alive = false,
+                    .extra_headers = @ptrCast(vrs.response.cookie_jar.toHeaderSlice(vrs.response.alloc) catch unreachable),
+                },
+            });
+
+            // I don't know why/where the writer goes invalid, but I'll probably
+            // fix it later?
+            if (vrs.response.stdhttp.response) |*h| vrs.response.downstream.http = h.writer();
+
+            vrs.sendHeaders() catch |err| switch (err) {
+                error.BrokenPipe => |e| return e,
+                else => unreachable,
+            };
+        },
+        else => {
+            vrs.sendHeaders() catch |err| switch (err) {
+                error.BrokenPipe => |e| return e,
+                else => unreachable,
+            };
+
+            for (vrs.response.cookie_jar.cookies.items) |cookie| {
+                var buffer: [1024]u8 = undefined;
+                const cookie_str = bufPrint(&buffer, "{header}\r\n", .{cookie}) catch unreachable;
+                _ = vrs.response.write(cookie_str) catch |err| switch (err) {
+                    error.BrokenPipe => |e| return e,
+                    else => unreachable,
+                };
+            }
+
+            _ = vrs.response.write("\r\n") catch |err| switch (err) {
+                error.BrokenPipe => |e| return e,
+                else => unreachable,
+            };
+        },
+    }
 }
 
 // TODO: remove this function?
