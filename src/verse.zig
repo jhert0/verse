@@ -1,7 +1,10 @@
 pub const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Stream = std.net.Stream;
+const AnyWriter = std.io.AnyWriter;
 const bufPrint = std.fmt.bufPrint;
 const splitScalar = std.mem.splitScalar;
+
 const log = std.log.scoped(.Verse);
 
 pub const Server = @import("server.zig");
@@ -19,12 +22,31 @@ pub const Cookies = @import("cookies.zig");
 const Error = @import("errors.zig").Error;
 const NetworkError = @import("errors.zig").NetworkError;
 
+const SendError = error{
+    WrongPhase,
+    HeadersFinished,
+    ResponseClosed,
+    UnknownStatus,
+} || NetworkError;
+
 pub const Verse = @This();
+
+const ONESHOT_SIZE = 14720;
+const Downstream = enum {
+    buffer,
+    zwsgi,
+    http,
+};
 
 alloc: Allocator,
 request: *const Request,
 response: Response,
 reqdata: RequestData,
+downstream: union(Downstream) {
+    buffer: std.io.BufferedWriter(ONESHOT_SIZE, Stream.Writer),
+    zwsgi: Stream.Writer,
+    http: std.io.AnyWriter,
+},
 uri: UriIter,
 
 // TODO fix this unstable API
@@ -43,6 +65,10 @@ pub fn init(a: Allocator, req: *const Request, res: Response, reqdata: RequestDa
         .request = req,
         .response = res,
         .reqdata = reqdata,
+        .downstream = switch (req.raw) {
+            .zwsgi => |z| .{ .zwsgi = z.*.acpt.stream.writer() },
+            .http => .{ .http = undefined },
+        },
         .uri = splitScalar(u8, req.uri[1..], '/'),
         .auth = Auth{
             .provider = Auth.InvalidProvider.empty(),
@@ -50,20 +76,53 @@ pub fn init(a: Allocator, req: *const Request, res: Response, reqdata: RequestDa
     };
 }
 
+fn writeChunk(vrs: Verse, data: []const u8) !void {
+    comptime unreachable;
+    var size: [19]u8 = undefined;
+    const chunk = try bufPrint(&size, "{x}\r\n", .{data.len});
+    try vrs.writeAll(chunk);
+    try vrs.writeAll(data);
+    try vrs.writeAll("\r\n");
+}
+
+fn writeAll(vrs: Verse, data: []const u8) !void {
+    var index: usize = 0;
+    while (index < data.len) {
+        index += try write(vrs, data[index..]);
+    }
+}
+
+/// Raw writer, use with caution!
+fn write(vrs: Verse, data: []const u8) !usize {
+    return switch (vrs.downstream) {
+        .zwsgi => |*w| try w.write(data),
+        .http => |*w| return try w.write(data),
+        .buffer => return try vrs.write(data),
+    };
+}
+
+fn flush(vrs: Verse) !void {
+    switch (vrs.downstream) {
+        .buffer => |*w| try w.flush(),
+        .http => |*h| h.flush(),
+        else => {},
+    }
+}
+
 fn sendHTTPHeader(vrs: *Verse) !void {
     if (vrs.response.status == null) vrs.response.status = .ok;
     switch (vrs.response.status.?) {
-        .ok => try vrs.response.writeAll("HTTP/1.1 200 OK\r\n"),
-        .found => try vrs.response.writeAll("HTTP/1.1 302 Found\r\n"),
-        .forbidden => try vrs.response.writeAll("HTTP/1.1 403 Forbidden\r\n"),
-        .not_found => try vrs.response.writeAll("HTTP/1.1 404 Not Found\r\n"),
-        .internal_server_error => try vrs.response.writeAll("HTTP/1.1 500 Internal Server Error\r\n"),
-        else => return error.UnknownStatus,
+        .ok => try vrs.writeAll("HTTP/1.1 200 OK\r\n"),
+        .found => try vrs.writeAll("HTTP/1.1 302 Found\r\n"),
+        .forbidden => try vrs.writeAll("HTTP/1.1 403 Forbidden\r\n"),
+        .not_found => try vrs.writeAll("HTTP/1.1 404 Not Found\r\n"),
+        .internal_server_error => try vrs.writeAll("HTTP/1.1 500 Internal Server Error\r\n"),
+        else => return SendError.UnknownStatus,
     }
 }
 
 pub fn sendHeaders(vrs: *Verse) !void {
-    switch (vrs.response.downstream) {
+    switch (vrs.downstream) {
         .http => try vrs.response.stdhttp.response.?.flush(),
         .zwsgi, .buffer => {
             try vrs.sendHTTPHeader();
@@ -74,24 +133,24 @@ pub fn sendHeaders(vrs: *Verse) !void {
                     header.key_ptr.*,
                     header.value_ptr.*.value,
                 });
-                _ = try vrs.response.write(b);
+                _ = try vrs.write(b);
             }
-            _ = try vrs.response.write("Transfer-Encoding: chunked\r\n");
+            _ = try vrs.write("Transfer-Encoding: chunked\r\n");
         },
     }
 }
 
 pub fn redirect(vrs: *Verse, loc: []const u8, see_other: bool) !void {
-    try vrs.response.writeAll("HTTP/1.1 ");
+    try vrs.writeAll("HTTP/1.1 ");
     if (see_other) {
-        try vrs.response.writeAll("303 See Other\r\n");
+        try vrs.writeAll("303 See Other\r\n");
     } else {
-        try vrs.response.writeAll("302 Found\r\n");
+        try vrs.writeAll("302 Found\r\n");
     }
 
-    try vrs.response.writeAll("Location: ");
-    try vrs.response.writeAll(loc);
-    try vrs.response.writeAll("\r\n\r\n");
+    try vrs.writeAll("Location: ");
+    try vrs.writeAll(loc);
+    try vrs.writeAll("\r\n\r\n");
 }
 
 /// sendPage is the default way to respond in verse using the Template system.
@@ -116,7 +175,7 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
 /// headers. If you only want to send response body data, call quickStart() to
 /// send all headers to the client
 pub fn sendRawSlice(vrs: *Verse, slice: []const u8) NetworkError!void {
-    vrs.response.writeAll(slice) catch |err| switch (err) {
+    vrs.writeAll(slice) catch |err| switch (err) {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };
@@ -137,7 +196,7 @@ pub fn sendJSON(vrs: *Verse, json: anytype) !void {
         log.err("Error trying to print json {}", .{err});
         return error.Unknown;
     };
-    vrs.response.writeAll(data) catch |err| switch (err) {
+    vrs.writeAll(data) catch |err| switch (err) {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };
@@ -148,7 +207,7 @@ pub fn sendJSON(vrs: *Verse, json: anytype) !void {
 pub fn quickStart(vrs: *Verse) NetworkError!void {
     if (vrs.response.status == null) vrs.response.status = .ok;
 
-    switch (vrs.response.downstream) {
+    switch (vrs.downstream) {
         .http => {
             vrs.response.stdhttp.response = vrs.response.stdhttp.request.?.*.respondStreaming(.{
                 .send_buffer = vrs.response.alloc.alloc(u8, 0xffffff) catch unreachable,
@@ -161,7 +220,7 @@ pub fn quickStart(vrs: *Verse) NetworkError!void {
 
             // I don't know why/where the writer goes invalid, but I'll probably
             // fix it later?
-            if (vrs.response.stdhttp.response) |*h| vrs.response.downstream.http = h.writer();
+            if (vrs.response.stdhttp.response) |*h| vrs.downstream.http = h.writer();
 
             vrs.sendHeaders() catch |err| switch (err) {
                 error.BrokenPipe => |e| return e,
@@ -177,13 +236,13 @@ pub fn quickStart(vrs: *Verse) NetworkError!void {
             for (vrs.response.cookie_jar.cookies.items) |cookie| {
                 var buffer: [1024]u8 = undefined;
                 const cookie_str = bufPrint(&buffer, "{header}\r\n", .{cookie}) catch unreachable;
-                _ = vrs.response.write(cookie_str) catch |err| switch (err) {
+                _ = vrs.write(cookie_str) catch |err| switch (err) {
                     error.BrokenPipe => |e| return e,
                     else => unreachable,
                 };
             }
 
-            _ = vrs.response.write("\r\n") catch |err| switch (err) {
+            _ = vrs.write("\r\n") catch |err| switch (err) {
                 error.BrokenPipe => |e| return e,
                 else => unreachable,
             };
@@ -194,10 +253,17 @@ pub fn quickStart(vrs: *Verse) NetworkError!void {
 // TODO: remove this function?
 /// Finish sending response, this is only necessary if using sendRawSlice in http mode.
 pub fn finish(vrs: *Verse) NetworkError!void {
-    vrs.response.finish() catch |err| switch (err) {
-        error.BrokenPipe => |e| return e,
-        else => unreachable,
-    };
+    switch (vrs.downstream) {
+        .http => {
+            if (vrs.response.stdhttp.response) |*h| {
+                h.endChunked(.{}) catch |err| switch (err) {
+                    error.BrokenPipe => |e| return e,
+                    else => unreachable,
+                };
+            }
+        },
+        else => {},
+    }
 }
 
 test "Verse" {
