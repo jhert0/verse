@@ -124,9 +124,16 @@ fn HTTPHeader(vrs: *Verse) ![:0]const u8 {
     if (vrs.status == null) vrs.status = .ok;
     return switch (vrs.status.?) {
         .ok => "HTTP/1.1 200 OK\r\n",
+        .created => "HTTP/1.1 201 Created\r\n",
+        .no_content => "HTTP/1.1 204 No Content\r\n",
         .found => "HTTP/1.1 302 Found\r\n",
+        .bad_request => "HTTP/1.1 400 Bad Request\r\n",
+        .unauthorized => "HTTP/1.1 401 Unauthorized\r\n",
         .forbidden => "HTTP/1.1 403 Forbidden\r\n",
         .not_found => "HTTP/1.1 404 Not Found\r\n",
+        .method_not_allowed => "HTTP/1.1 405 Method Not Allowed\r\n",
+        .conflict => "HTTP/1.1 409 Conflict\r\n",
+        .payload_too_large => "HTTP/1.1 413 Content Too Large\r\n",
         .internal_server_error => "HTTP/1.1 500 Internal Server Error\r\n",
         else => return SendError.UnknownStatus,
     };
