@@ -70,7 +70,7 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
 /// headers. If you only want to send response body data, call quickStart() to
 /// send all headers to the client
 pub fn sendRawSlice(vrs: *Verse, slice: []const u8) NetworkError!void {
-    vrs.response.send(slice) catch |err| switch (err) {
+    vrs.response.writeAll(slice) catch |err| switch (err) {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };
@@ -95,15 +95,21 @@ pub fn sendJSON(vrs: *Verse, json: anytype) !void {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };
-    vrs.response.finish() catch |err| switch (err) {
-        error.BrokenPipe => |e| return e,
-        else => unreachable,
-    };
+    return vrs.finish();
 }
 
 /// This function may be removed in the future
 pub fn quickStart(vrs: *Verse) NetworkError!void {
     vrs.response.start() catch |err| switch (err) {
+        error.BrokenPipe => |e| return e,
+        else => unreachable,
+    };
+}
+
+// TODO: remove this function?
+/// Finish sending response, this is only necessary if using sendRawSlice in http mode.
+pub fn finish(vrs: *Verse) NetworkError!void {
+    vrs.response.finish() catch |err| switch (err) {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };

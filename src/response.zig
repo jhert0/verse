@@ -159,13 +159,6 @@ pub fn redirect(res: *Response, loc: []const u8, see_other: bool) !void {
     try res.writeAll("\r\n\r\n");
 }
 
-/// Do not use
-/// TODO remove
-pub fn send(res: *Response, data: []const u8) !void {
-    try res.writeAll(data);
-    return res.finish();
-}
-
 pub fn writer(res: *const Response) AnyWriter {
     return .{
         .writeFn = typeErasedWrite,

@@ -47,4 +47,5 @@ fn index(verse: *Verse) Router.Error!void {
     });
     try verse.quickStart();
     try verse.sendRawSlice(found);
+    try verse.finish();
 }
