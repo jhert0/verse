@@ -113,9 +113,16 @@ fn sendHTTPHeader(vrs: *Verse) !void {
     if (vrs.response.status == null) vrs.response.status = .ok;
     switch (vrs.response.status.?) {
         .ok => try vrs.writeAll("HTTP/1.1 200 OK\r\n"),
+        .created => try vrs.writeAll("HTTP/1.1 201 Created\r\n"),
+        .no_content => try vrs.writeAll("HTTP/1.1 204 No Content\r\n"),
         .found => try vrs.writeAll("HTTP/1.1 302 Found\r\n"),
+        .bad_request => try vrs.writeAll("HTTP/1.1 400 Bad Request\r\n"),
+        .unauthorized => try vrs.writeAll("HTTP/1.1 401 Unauthorized\r\n"),
         .forbidden => try vrs.writeAll("HTTP/1.1 403 Forbidden\r\n"),
         .not_found => try vrs.writeAll("HTTP/1.1 404 Not Found\r\n"),
+        .method_not_allowed => try vrs.writeAll("HTTP/1.1 405 Method Not Allowed\r\n"),
+        .conflict => try vrs.writeAll("HTTP/1.1 409 Conflict\r\n"),
+        .payload_too_large => try vrs.writeAll("HTTP/1.1 413 Content Too Large\r\n"),
         .internal_server_error => try vrs.writeAll("HTTP/1.1 500 Internal Server Error\r\n"),
         else => return SendError.UnknownStatus,
     }
