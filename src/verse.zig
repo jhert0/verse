@@ -63,6 +63,7 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
     page.format("{}", .{}, writer) catch |err| switch (err) {
         else => log.err("Page Build Error {}", .{err}),
     };
+    return vrs.finish();
 }
 
 /// sendRawSlice will allow you to send data directly to the client. It will not
