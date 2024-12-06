@@ -20,7 +20,6 @@ pub const TransferMode = enum {
     proxy_streaming,
 };
 
-alloc: Allocator,
 headers: Headers,
 tranfer_mode: TransferMode = .static,
 // This is just bad code, but I need to give the sane implementation more thought
@@ -33,7 +32,6 @@ status: ?std.http.Status = null,
 
 pub fn init(a: Allocator, req: *const Request) !Response {
     var self = Response{
-        .alloc = a,
         .headers = Headers.init(a),
         .cookie_jar = try Cookies.Jar.init(a),
     };

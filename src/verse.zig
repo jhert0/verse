@@ -210,11 +210,11 @@ pub fn quickStart(vrs: *Verse) NetworkError!void {
     switch (vrs.downstream) {
         .http => {
             vrs.response.stdhttp.response = vrs.response.stdhttp.request.?.*.respondStreaming(.{
-                .send_buffer = vrs.response.alloc.alloc(u8, 0xffffff) catch unreachable,
+                .send_buffer = vrs.alloc.alloc(u8, 0xffffff) catch unreachable,
                 .respond_options = .{
                     .transfer_encoding = .chunked,
                     .keep_alive = false,
-                    .extra_headers = @ptrCast(vrs.response.cookie_jar.toHeaderSlice(vrs.response.alloc) catch unreachable),
+                    .extra_headers = @ptrCast(vrs.response.cookie_jar.toHeaderSlice(vrs.alloc) catch unreachable),
                 },
             });
 
