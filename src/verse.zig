@@ -179,6 +179,8 @@ pub fn sendRawSlice(vrs: *Verse, slice: []const u8) NetworkError!void {
         error.BrokenPipe => |e| return e,
         else => unreachable,
     };
+
+    return vrs.finish();
 }
 
 /// Helper function to return a default error page for a given http status code.
@@ -250,9 +252,8 @@ pub fn quickStart(vrs: *Verse) NetworkError!void {
     }
 }
 
-// TODO: remove this function?
-/// Finish sending response, this is only necessary if using sendRawSlice in http mode.
-pub fn finish(vrs: *Verse) NetworkError!void {
+/// Finish sending response.
+fn finish(vrs: *Verse) NetworkError!void {
     switch (vrs.downstream) {
         .http => {
             if (vrs.response.stdhttp.response) |*h| {

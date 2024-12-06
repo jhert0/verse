@@ -27,5 +27,4 @@ fn route(verse: *Verse) Router.Error!BuildFn {
 fn index(verse: *Verse) Router.Error!void {
     try verse.quickStart();
     try verse.sendRawSlice("hello world");
-    try verse.finish();
 }
