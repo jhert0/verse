@@ -237,7 +237,7 @@ pub fn sendJSON(vrs: *Verse, json: anytype, comptime code: std.http.Status) !voi
         @compileError("Sending JSON is not supported with status code no content");
     }
 
-    vrs.response.status = code;
+    vrs.status = code;
     try vrs.quickStart();
     const data = std.json.stringifyAlloc(vrs.alloc, json, .{
         .emit_null_optional_fields = false,
