@@ -1,33 +1,13 @@
-const std = @import("std");
-const eql = std.mem.eql;
-const startsWith = std.mem.startsWith;
-const indexOf = std.mem.indexOf;
-const indexOfPos = std.mem.indexOfPos;
-const indexOfAnyPos = std.mem.indexOfAnyPos;
-const indexOfScalar = std.mem.indexOfScalar;
-const indexOfScalarPos = std.mem.indexOfScalarPos;
-const isUpper = std.ascii.isUpper;
-const count = std.mem.count;
-const isWhitespace = std.ascii.isWhitespace;
-const trim = std.mem.trim;
-const trimLeft = std.mem.trimLeft;
-const whitespace = std.ascii.whitespace[0..];
-
-pub const Directive = @This();
-
-const PageRuntime = @import("page.zig").PageRuntime;
-
-const Template = @import("../template.zig");
-
-const dynamic = &Template.dynamic;
-const builtin = Template.builtin;
-const makeFieldName = Template.makeFieldName;
-
 verb: Verb,
 noun: []const u8,
 otherwise: Otherwise,
 known_type: ?KnownType = null,
 tag_block: []const u8,
+
+pub const Directive = @This();
+const Pages = @import("page.zig");
+const PageRuntime = Pages.PageRuntime;
+const Template = @import("../template.zig");
 
 pub const Otherwise = union(enum) {
     required: void,
@@ -446,7 +426,7 @@ pub fn format(d: Directive, comptime _: []const u8, _: std.fmt.FormatOptions, ou
     unreachable;
 }
 
-pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
+pub fn formatTyped(d: Directive, comptime T: type, ctx: T, inj: ?Pages.Injector, out: anytype) !void {
     switch (d.verb) {
         .variable => {
             if (d.known_type) |_| return d.doTyped(T, ctx, out);
@@ -475,7 +455,7 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
                                     if (std.mem.eql(u8, field.name, realname)) {
                                         if (@field(ctx, field.name)) |subdata| {
                                             var subpage = template.pageOf(otype.child, subdata);
-                                            try subpage.format("{}", .{}, out);
+                                            try subpage.format2("{}", inj, out);
                                         } else std.debug.print(
                                             "sub template data was null for {s}\n",
                                             .{field.name},
@@ -486,7 +466,7 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
                                     if (std.mem.eql(u8, field.name, noun)) {
                                         const subdata = @field(ctx, field.name);
                                         var subpage = template.pageOf(@TypeOf(subdata), subdata);
-                                        try subpage.format("{}", .{}, out);
+                                        try subpage.format2("{}", inj, out);
                                     }
                                 },
                                 else => {}, //@compileLog(field.type),
@@ -507,3 +487,22 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
         else => d.doTyped(T, ctx, out) catch unreachable,
     }
 }
+
+const std = @import("std");
+const eql = std.mem.eql;
+const startsWith = std.mem.startsWith;
+const indexOf = std.mem.indexOf;
+const indexOfPos = std.mem.indexOfPos;
+const indexOfAnyPos = std.mem.indexOfAnyPos;
+const indexOfScalar = std.mem.indexOfScalar;
+const indexOfScalarPos = std.mem.indexOfScalarPos;
+const isUpper = std.ascii.isUpper;
+const count = std.mem.count;
+const isWhitespace = std.ascii.isWhitespace;
+const trim = std.mem.trim;
+const trimLeft = std.mem.trimLeft;
+const whitespace = std.ascii.whitespace[0..];
+
+const dynamic = &Template.dynamic;
+const builtin = Template.builtin;
+const makeFieldName = Template.makeFieldName;
