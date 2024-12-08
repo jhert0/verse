@@ -1,14 +1,8 @@
-const std = @import("std");
-const Type = @import("builtin").Type;
-const Allocator = std.mem.Allocator;
-const eql = std.mem.eql;
-const splitScalar = std.mem.splitScalar;
-const splitSequence = std.mem.splitSequence;
-
-const Data = @This();
-
 post: ?PostData,
 query: QueryData,
+
+const Data = @This();
+pub const ContentType = @import("content-type.zig");
 
 pub fn validate(data: Data, comptime T: type) !T {
     return RequestData(T).init(data);
@@ -163,45 +157,6 @@ pub const QueryData = struct {
     }
 };
 
-pub const ContentType = union(enum) {
-    const Application = enum {
-        @"x-www-form-urlencoded",
-        @"x-git-upload-pack-request",
-    };
-    const MultiPart = enum {
-        mixed,
-        @"form-data",
-    };
-    multipart: MultiPart,
-    application: Application,
-
-    fn subWrap(comptime Kind: type, str: []const u8) !Kind {
-        inline for (std.meta.fields(Kind)) |field| {
-            if (std.mem.startsWith(u8, str, field.name)) {
-                return @enumFromInt(field.value);
-            }
-        }
-        return error.UnknownContentType;
-    }
-
-    fn wrap(comptime kind: type, val: anytype) !ContentType {
-        return switch (kind) {
-            MultiPart => .{ .multipart = try subWrap(kind, val) },
-            Application => .{ .application = try subWrap(kind, val) },
-            else => @compileError("not implemented type"),
-        };
-    }
-
-    pub fn fromStr(str: []const u8) !ContentType {
-        inline for (std.meta.fields(ContentType)) |field| {
-            if (std.mem.startsWith(u8, str, field.name)) {
-                return wrap(field.type, str[field.name.len + 1 ..]);
-            }
-        }
-        return error.UnknownContentType;
-    }
-};
-
 pub fn RequestData(comptime T: type) type {
     return struct {
         req: T,
@@ -345,6 +300,9 @@ fn parseApplication(a: Allocator, ap: ContentType.Application, data: []u8, htype
             // Git just uses the raw data instead, no need to preprocess
             return &[0]DataItem{};
         },
+        .@"octet-stream" => {
+            unreachable; // Not implemented
+        },
     }
 }
 
@@ -457,9 +415,10 @@ pub fn readBody(
     const read_size = try reader.read(post_buf);
     if (read_size != size) return error.UnexpectedHttpBodySize;
 
-    const items = switch (try ContentType.fromStr(htype)) {
+    const items = switch ((try ContentType.fromStr(htype)).base) {
         .application => |ap| try parseApplication(a, ap, post_buf, htype),
-        .multipart => |mp| try parseMulti(a, mp, post_buf, htype),
+        .multipart, .message => |mp| try parseMulti(a, mp, post_buf, htype),
+        .audio, .font, .image, .text, .video => @panic("content-type not implemented"),
     };
 
     return .{
@@ -472,17 +431,8 @@ pub fn readQuery(a: Allocator, query: []const u8) !QueryData {
     return QueryData.init(a, query);
 }
 
-pub fn parseRequestData(
-    a: Allocator,
-    query: []const u8,
-    acpt: std.net.StreamServer.Connection,
-    size: usize,
-    htype: []const u8,
-) !RequestData {
-    return RequestData{
-        .post_data = try readBody(a, acpt, size, htype),
-        .query_data = try readQuery(a, query),
-    };
+test {
+    std.testing.refAllDecls(@This());
 }
 
 test "multipart/mixed" {}
@@ -492,3 +442,10 @@ test "multipart/form-data" {}
 test "multipart/multipart" {}
 
 test "application/x-www-form-urlencoded" {}
+
+const std = @import("std");
+const Type = @import("builtin").Type;
+const Allocator = std.mem.Allocator;
+const eql = std.mem.eql;
+const splitScalar = std.mem.splitScalar;
+const splitSequence = std.mem.splitSequence;

@@ -9,6 +9,7 @@ pub const UriIter = Router.UriIter;
 pub const Headers = @import("headers.zig");
 pub const Auth = @import("auth.zig");
 pub const Cookies = @import("cookies.zig");
+pub const ContentType = @import("content-type.zig");
 
 const Error = @import("errors.zig").Error;
 const NetworkError = @import("errors.zig").NetworkError;
@@ -28,8 +29,8 @@ auth: Auth,
 route_ctx: ?*const anyopaque = null,
 
 // Raw move from response.zig
-
 headers: Headers,
+content_type: ?ContentType = ContentType.default,
 cookie_jar: Cookies.Jar,
 status: ?std.http.Status = null,
 
@@ -56,7 +57,7 @@ const VarPair = struct {
 
 pub fn init(a: Allocator, req: *const Request, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
-    var self = Verse{
+    return .{
         .alloc = a,
         .request = req,
         .reqdata = reqdata,
@@ -71,9 +72,6 @@ pub fn init(a: Allocator, req: *const Request, reqdata: RequestData) !Verse {
         .headers = Headers.init(a),
         .cookie_jar = try Cookies.Jar.init(a),
     };
-    try self.headersAdd("Server", "zwsgi/0.0.0");
-    try self.headersAdd("Content-Type", "text/html; charset=utf-8"); // Firefox is trash
-    return self;
 }
 
 pub fn headersAdd(vrs: *Verse, comptime name: []const u8, value: []const u8) !void {
@@ -148,6 +146,37 @@ pub fn sendHeaders(vrs: *Verse) !void {
             const h_resp = try vrs.HTTPHeader();
             vect[count] = .{ .base = h_resp.ptr, .len = h_resp.len };
             count += 1;
+
+            // Default headers
+            const s_name = "Server: verse/0.0.0-dev\r\n";
+            vect[count] = .{ .base = s_name.ptr, .len = s_name.len };
+            count += 1;
+
+            if (vrs.content_type) |ct| {
+                vect[count] = .{ .base = "Content-Type: ".ptr, .len = "Content-Type: ".len };
+                count += 1;
+                switch (ct.base) {
+                    inline else => |tag, name| {
+                        vect[count] = .{
+                            .base = @tagName(name).ptr,
+                            .len = @tagName(name).len,
+                        };
+                        count += 1;
+                        vect[count] = .{ .base = "/".ptr, .len = "/".len };
+                        count += 1;
+                        vect[count] = .{
+                            .base = @tagName(tag).ptr,
+                            .len = @tagName(tag).len,
+                        };
+                        count += 1;
+                    },
+                }
+
+                vect[count] = .{ .base = "\r\n".ptr, .len = "\r\n".len };
+                count += 1;
+
+                //"text/html; charset=utf-8"); // Firefox is trash
+            }
 
             var itr = vrs.headers.iterator();
             while (itr.next()) |header| {
