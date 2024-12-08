@@ -15,6 +15,12 @@ pub const ContentBase = union(Base) {
     /// Multipart types
     multipart: MultiPart,
     message: MultiPart,
+
+    pub fn string(comptime cb: ContentBase) [:0]const u8 {
+        return switch (cb) {
+            inline else => |tag| @tagName(cb) ++ "/" ++ @tagName(tag),
+        };
+    }
 };
 
 pub const Base = enum {
@@ -42,18 +48,18 @@ pub const Application = enum {
     @"x-git-upload-pack-request",
     @"octet-stream",
 
-    pub fn toSlice(comptime app: Application) [:0]const u8 {
+    pub fn string(comptime app: Application) [:0]const u8 {
         return switch (app) {
             inline else => |r| @typeName(@This())[13..] ++ "/" ++ @tagName(r),
         };
     }
 
-    test "ApplicationtoSlice" {
+    test "Application.string" {
         // This should be a lowercase A, but I don't know how much time to
         // invest into this yet.
         try std.testing.expectEqualStrings(
             "Application/octet-stream",
-            Application.@"octet-stream".toSlice(),
+            Application.@"octet-stream".string(),
         );
     }
 };
@@ -93,21 +99,29 @@ pub const CharSet = enum {
     @"utf-8",
 };
 
-fn a(comptime b: ContentBase) [:0]const u8 {
-    return switch (b) {
-        inline else => |t| @tagName(t),
-    };
-}
-
-pub fn toSlice(comptime ct: ContentType) []const u8 {
-    return switch (ct.base) {
+pub fn string(comptime ct: ContentType) []const u8 {
+    const kind: [:0]const u8 = switch (ct.base) {
         inline else => |tag| @tagName(ct.base) ++ "/" ++ @tagName(tag),
     };
+
+    if (ct.parameter) |param| {
+        return switch (param) {
+            inline else => |p| return kind ++ "; charset=" ++ @tagName(p),
+        };
+    } else return kind;
 }
 
-test toSlice {
-    try std.testing.expectEqualStrings("text/html", default.toSlice());
-    try std.testing.expectEqualStrings("image/png", (ContentType{ .base = .{ .image = .png } }).toSlice());
+test string {
+    try std.testing.expectEqualStrings("text/html", default.string());
+    try std.testing.expectEqualStrings("image/png", (ContentType{ .base = .{ .image = .png } }).string());
+
+    try std.testing.expectEqualStrings(
+        "text/html; charset=utf-8",
+        (ContentType{
+            .base = .{ .text = .html },
+            .parameter = .@"utf-8",
+        }).string(),
+    );
 }
 
 pub fn fromStr(str: []const u8) !ContentType {
