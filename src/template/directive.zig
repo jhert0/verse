@@ -5,9 +5,6 @@ known_type: ?KnownType = null,
 tag_block: []const u8,
 
 pub const Directive = @This();
-const Pages = @import("page.zig");
-const PageRuntime = Pages.PageRuntime;
-const Template = @import("../template.zig");
 
 pub const Otherwise = union(enum) {
     required: void,
@@ -487,6 +484,10 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
         else => d.doTyped(T, ctx, out) catch unreachable,
     }
 }
+
+const Pages = @import("page.zig");
+const PageRuntime = Pages.PageRuntime;
+const Template = @import("../template.zig");
 
 const std = @import("std");
 const eql = std.mem.eql;
