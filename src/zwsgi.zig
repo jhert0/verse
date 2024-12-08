@@ -105,7 +105,7 @@ pub fn serve(z: *zWSGI) !void {
         const callable = z.router.routerfn(&verse, z.router.routefn);
         z.router.builderfn(&verse, callable);
     }
-    log.debug("closing, and cleaning up", .{});
+    log.warn("closing, and cleaning up", .{});
 }
 
 export fn sig_cb(sig: c_int, _: *const siginfo_t, _: ?*const anyopaque) callconv(.C) void {

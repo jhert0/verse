@@ -26,8 +26,7 @@ uri: UriIter,
 
 // TODO fix this unstable API
 auth: Auth,
-route_ctx: ?*const anyopaque = null,
-page_injector: ?*const fn (*anyopaque, []const u8) ?[]const u8 = null,
+endpoint_ctx: ?*const anyopaque = null,
 
 // Raw move from response.zig
 headers: Headers,
@@ -55,6 +54,8 @@ const VarPair = struct {
     []const u8,
     []const u8,
 };
+
+pub const EndpointWrapper = struct {};
 
 pub fn init(a: Allocator, req: *const Request, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
@@ -228,12 +229,10 @@ pub fn redirect(vrs: *Verse, loc: []const u8, see_other: bool) !void {
 pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
     try vrs.quickStart();
 
-    const inj: ?Template.Pages.Injector = if (vrs.page_injector) |pj| .{ .ctx = vrs, .func = pj } else null;
-
     switch (vrs.downstream) {
         .http, .zwsgi => |stream| {
             const w = stream.writer();
-            page.format2("{}", inj, w) catch |err| switch (err) {
+            page.format("{}", .{}, w) catch |err| switch (err) {
                 else => log.err("Page Build Error {}", .{err}),
             };
         },

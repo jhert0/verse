@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const eql = std.mem.eql;
 const allocPrint = std.fmt.allocPrint;
 const log = std.log.scoped(.Verse);
 
@@ -40,17 +41,18 @@ fn tailPath(path: []const u8) []const u8 {
     return path[0..0];
 }
 
-pub const builtin: [compiled.data.len]Template = blk: {
-    @setEvalBranchQuota(5000);
-    var t: [compiled.data.len]Template = undefined;
-    for (compiled.data, &t) |filedata, *dst| {
-        dst.* = Template{
+pub const builtin: []const Template = constructTemplates();
+
+fn constructTemplates() []const Template {
+    var t: []const Template = &[0]Template{};
+    for (compiled.data) |filedata| {
+        t = t ++ [_]Template{.{
             .name = tailPath(filedata.path),
             .blob = filedata.blob,
-        };
+        }};
     }
-    break :blk t;
-};
+    return t;
+}
 
 pub var dynamic: []const Template = undefined;
 
@@ -112,7 +114,7 @@ pub fn load(a: Allocator, comptime name: []const u8) Template {
 
 pub fn findTemplate(comptime name: []const u8) Template {
     inline for (builtin) |bi| {
-        if (comptime std.mem.eql(u8, bi.name, name)) {
+        if (comptime eql(u8, bi.name, name)) {
             return bi;
         }
     }
@@ -120,6 +122,10 @@ pub fn findTemplate(comptime name: []const u8) Template {
 }
 
 pub fn PageData(comptime name: []const u8) type {
+    //const n = std.fmt.comptimePrint("search for {s}", .{"templates/" ++ name});
+    //const data = @embedFile(name);
+    //@compileLog(n);
+    //@compileLog(data.len);
     const template = findTemplate(name);
     const page_data = comptime findPageType(name);
     return Page(template, page_data);

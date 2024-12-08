@@ -426,7 +426,7 @@ pub fn format(d: Directive, comptime _: []const u8, _: std.fmt.FormatOptions, ou
     unreachable;
 }
 
-pub fn formatTyped(d: Directive, comptime T: type, ctx: T, inj: ?Pages.Injector, out: anytype) !void {
+pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
     switch (d.verb) {
         .variable => {
             if (d.known_type) |_| return d.doTyped(T, ctx, out);
@@ -455,7 +455,7 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, inj: ?Pages.Injector,
                                     if (std.mem.eql(u8, field.name, realname)) {
                                         if (@field(ctx, field.name)) |subdata| {
                                             var subpage = template.pageOf(otype.child, subdata);
-                                            try subpage.format2("{}", inj, out);
+                                            try subpage.format("{}", .{}, out);
                                         } else std.debug.print(
                                             "sub template data was null for {s}\n",
                                             .{field.name},
@@ -466,7 +466,7 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, inj: ?Pages.Injector,
                                     if (std.mem.eql(u8, field.name, noun)) {
                                         const subdata = @field(ctx, field.name);
                                         var subpage = template.pageOf(@TypeOf(subdata), subdata);
-                                        try subpage.format2("{}", inj, out);
+                                        try subpage.format("{}", .{}, out);
                                     }
                                 },
                                 else => {}, //@compileLog(field.type),
