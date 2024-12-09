@@ -26,7 +26,8 @@ uri: UriIter,
 
 // TODO fix this unstable API
 auth: Auth,
-endpoint_ctx: ?*const anyopaque = null,
+/// The RouteData API is currently unstable, use with caution
+route_data: RouteData,
 
 // Raw move from response.zig
 headers: Headers,
@@ -55,7 +56,29 @@ const VarPair = struct {
     []const u8,
 };
 
-pub const EndpointWrapper = struct {};
+/// Warning leaks like a sieve while I ponder the API
+pub const RouteData = struct {
+    items: std.ArrayList(Pair),
+
+    pub const Pair = struct {
+        name: []const u8,
+        data: *const anyopaque,
+    };
+
+    pub fn add(self: *RouteData, comptime name: []const u8, data: *const anyopaque) !void {
+        for (self.items.items) |each| {
+            if (eql(u8, each.name, name)) return error.Exists;
+        }
+
+        try self.items.append(.{ .name = name, .data = data });
+    }
+
+    pub fn get(self: RouteData, comptime name: []const u8, T: type) !T {
+        for (self.items.items) |each| {
+            if (eql(u8, each.name, name)) return @as(T, @ptrCast(@alignCast(each.data)));
+        } else return error.NotFound;
+    }
+};
 
 pub fn init(a: Allocator, req: *const Request, reqdata: RequestData) !Verse {
     std.debug.assert(req.uri[0] == '/');
@@ -73,6 +96,7 @@ pub fn init(a: Allocator, req: *const Request, reqdata: RequestData) !Verse {
         },
         .headers = Headers.init(a),
         .cookie_jar = try Cookies.Jar.init(a),
+        .route_data = .{ .items = std.ArrayList(RouteData.Pair).init(a) },
     };
 }
 
@@ -300,8 +324,9 @@ test "Verse" {
     std.testing.refAllDecls(@This());
 }
 
-pub const std = @import("std");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
+const eql = std.mem.eql;
 const Stream = std.net.Stream;
 const AnyWriter = std.io.AnyWriter;
 const bufPrint = std.fmt.bufPrint;
