@@ -81,7 +81,7 @@ fn initNoun(noun: []const u8, tag: []const u8) ?Directive {
 
     var default_str: ?[]const u8 = null;
     var knownt: ?KnownType = null;
-    var rem_attr = tag[noun.len + 1 .. tag.len - 1];
+    var rem_attr: []const u8 = tag[noun.len + 1 .. tag.len - 1];
     while (indexOfScalar(u8, rem_attr, '=') != null) {
         if (findAttribute(rem_attr)) |attr| {
             if (eql(u8, attr.name, "type")) {
@@ -142,21 +142,31 @@ pub fn initVerb(verb: []const u8, noun: []const u8, blob: []const u8) ?Directive
         const b_noun = noun[1..(indexOfScalarPos(u8, noun, 1, ' ') orelse return null)];
         const tail = noun[b_noun.len + 1 ..];
         const b_html = tail[1..(indexOfScalarPos(u8, tail, 2, ' ') orelse return null)];
-        if (getBuiltin(b_html)) |bi| {
-            return Directive{
+        if (@inComptime()) {
+            if (getBuiltin(b_html)) |bi| return Directive{
                 .verb = .build,
                 .noun = b_noun,
                 .otherwise = .{ .template = bi },
                 .tag_block = blob[0 .. verb.len + 2 + noun.len],
             };
-        } else if (getDynamic(b_html)) |bi| {
-            return Directive{
-                .verb = .build,
-                .noun = b_noun,
-                .otherwise = .{ .template = bi },
-                .tag_block = blob[0 .. verb.len + 2 + noun.len],
-            };
-        } else return null;
+            @compileError("unreachable: Unable to Build template name " ++ b_html ++ " (not found)");
+        } else {
+            if (getBuiltin(b_html)) |bi| {
+                return Directive{
+                    .verb = .build,
+                    .noun = b_noun,
+                    .otherwise = .{ .template = bi },
+                    .tag_block = blob[0 .. verb.len + 2 + noun.len],
+                };
+            } else if (getDynamic(b_html)) |bi| {
+                return Directive{
+                    .verb = .build,
+                    .noun = b_noun,
+                    .otherwise = .{ .template = bi },
+                    .tag_block = blob[0 .. verb.len + 2 + noun.len],
+                };
+            } else return null;
+        }
     } else return null;
 
     // TODO convert to while
@@ -263,10 +273,10 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
     }
 
     var start = 1 + (indexOf(u8, blob, ">") orelse return null);
-    var close_pos: usize = indexOfPos(u8, blob, 0, close) orelse return null;
+    var close_pos: usize = indexOfPosLinear(u8, blob, 0, close) orelse return null;
     var skip = count(u8, blob[start..close_pos], open);
     while (skip > 0) : (skip -= 1) {
-        close_pos = indexOfPos(u8, blob, close_pos + 1, close) orelse close_pos;
+        close_pos = indexOfPosLinear(u8, blob, close_pos + 1, close) orelse close_pos;
     }
 
     const end = close_pos + close.len;
@@ -493,7 +503,7 @@ const std = @import("std");
 const eql = std.mem.eql;
 const startsWith = std.mem.startsWith;
 const indexOf = std.mem.indexOf;
-const indexOfPos = std.mem.indexOfPos;
+const indexOfPosLinear = std.mem.indexOfPosLinear;
 const indexOfAnyPos = std.mem.indexOfAnyPos;
 const indexOfScalar = std.mem.indexOfScalar;
 const indexOfScalarPos = std.mem.indexOfScalarPos;
