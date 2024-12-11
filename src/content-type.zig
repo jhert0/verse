@@ -1,7 +1,10 @@
 base: ContentBase,
 parameter: ?CharSet = null,
 
-pub const default: ContentType = .{ .base = .{ .text = .html } };
+pub const default: ContentType = .{
+    .base = .{ .text = .html },
+    .parameter = .@"utf-8",
+};
 
 pub const ContentType = @This();
 
@@ -112,14 +115,13 @@ pub fn string(comptime ct: ContentType) []const u8 {
 }
 
 test string {
-    try std.testing.expectEqualStrings("text/html", default.string());
+    try std.testing.expectEqualStrings("text/html; charset=utf-8", default.string());
     try std.testing.expectEqualStrings("image/png", (ContentType{ .base = .{ .image = .png } }).string());
 
     try std.testing.expectEqualStrings(
-        "text/html; charset=utf-8",
+        "text/html",
         (ContentType{
             .base = .{ .text = .html },
-            .parameter = .@"utf-8",
         }).string(),
     );
 }

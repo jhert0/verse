@@ -197,6 +197,14 @@ pub fn sendHeaders(vrs: *Verse) !void {
                         count += 1;
                     },
                 }
+                if (ct.parameter) |param| {
+                    const pre = "; charset=";
+                    vect[count] = .{ .base = pre.ptr, .len = pre.len };
+                    count += 1;
+                    const tag = @tagName(param);
+                    vect[count] = .{ .base = tag.ptr, .len = tag.len };
+                    count += 1;
+                }
 
                 vect[count] = .{ .base = "\r\n".ptr, .len = "\r\n".len };
                 count += 1;
