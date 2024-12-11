@@ -93,15 +93,15 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
         }
 
         pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
-            //std.debug.print("data offsets {any}\n", .{Self.DataOffsets});
             const blob = Self.PageTemplate.blob;
             if (Self.DataOffsets.len == 0)
                 return try out.writeAll(blob);
 
+            var last_end: usize = 0;
             for (Self.DataOffsets) |offs| {
                 const start = offs[0];
-                const end = offs[0];
-                try out.writeAll(blob[0..start]);
+                const end = offs[1];
+                try out.writeAll(blob[last_end..start]);
                 //blob = blob[start..];
 
                 if (Directive.init(blob[start..])) |drct| {
@@ -119,9 +119,9 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     std.debug.print("init failed ?\n", .{});
                     try out.writeAll(blob[end..]);
                 }
+                last_end = end;
                 continue;
             } else {
-                const last_end = Self.DataOffsets[Self.DataOffsets.len - 1][1];
                 return try out.writeAll(blob[last_end..]);
             }
         }

@@ -349,10 +349,7 @@ test "directive nothing new" {
     const pg = Page(t, @TypeOf(ctx)).init(.{});
     const p = try allocPrint(a, "{}", .{pg});
     defer a.free(p);
-    // TODO this is closer to the correct behavior, but it should still return
-    // an error. It doesn't because reader rules, but we can, and should move it
-    // to comptime.
-    try std.testing.expectEqualStrings("", p);
+    try std.testing.expectEqualStrings("<Nothing>", p);
 }
 
 test "directive ORELSE" {
@@ -520,7 +517,6 @@ test "directive For & For" {
 }
 
 test "directive for then for" {
-    if (true) return error.SkipZigTest;
     var a = std.testing.allocator;
 
     const blob =
