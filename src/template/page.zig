@@ -2,7 +2,12 @@ const Templates = @import("../template.zig");
 const Template = Templates.Template;
 const Directive = Templates.Directive;
 
-const Offset = struct { usize, usize };
+const Kind = enum {
+    slice,
+    directive,
+};
+
+const Offset = struct { usize, usize, Kind };
 
 pub fn PageRuntime(comptime PageDataType: type) type {
     return struct {
@@ -64,19 +69,28 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
     while (pblob.len > 0) {
         if (indexOfScalar(u8, pblob, '<')) |offset| {
             pblob = pblob[offset..];
+            if (index != offset and offset != 0) {
+                found_offsets = found_offsets ++ [_]Offset{.{ index, index + offset, .slice }};
+            }
             index += offset;
             if (Directive.init(pblob)) |drct| {
                 const end = drct.tag_block.len;
-                found_offsets = found_offsets ++ [_]Offset{.{ index, index + end }};
+                found_offsets = found_offsets ++ [_]Offset{.{ index, index + end, .directive }};
                 pblob = pblob[end..];
                 index += end;
             } else {
                 if (indexOfPosLinear(u8, pblob, 1, "<")) |next| {
+                    if (index != next) {
+                        found_offsets = found_offsets ++ [_]Offset{.{ index, index + next, .slice }};
+                    }
                     index += next;
                     pblob = pblob[next..];
                 } else break;
             }
         } else break;
+    }
+    if (index != pblob.len) {
+        found_offsets = found_offsets ++ [_]Offset{.{ index, index + pblob.len, .slice }};
     }
     const offset_len = found_offsets.len;
     const offsets: [offset_len]Offset = found_offsets[0..offset_len].*;
@@ -93,6 +107,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
         }
 
         pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
+            //std.debug.print("offs {any}\n", .{Self.DataOffsets});
             const blob = Self.PageTemplate.blob;
             if (Self.DataOffsets.len == 0)
                 return try out.writeAll(blob);
@@ -101,26 +116,26 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             for (Self.DataOffsets) |offs| {
                 const start = offs[0];
                 const end = offs[1];
-                try out.writeAll(blob[last_end..start]);
-                //blob = blob[start..];
-
-                if (Directive.init(blob[start..])) |drct| {
-                    drct.formatTyped(PageDataType, self.data, out) catch |err| switch (err) {
-                        error.IgnoreDirective => try out.writeAll(blob[start..end]),
-                        error.VariableMissing => {
-                            if (!is_test) log.err("Template Error, variable missing {{{s}}}", .{blob[start..end]});
-                            try out.writeAll(blob[start..end]);
-                        },
-                        else => return err,
-                    };
-
-                    //blob = blob[end..];
-                } else {
-                    std.debug.print("init failed ?\n", .{});
-                    try out.writeAll(blob[end..]);
+                switch (offs[2]) {
+                    .slice => try out.writeAll(blob[start..end]),
+                    .directive => {
+                        if (Directive.init(blob[start..])) |drct| {
+                            drct.formatTyped(PageDataType, self.data, out) catch |err| switch (err) {
+                                error.IgnoreDirective => try out.writeAll(blob[start..end]),
+                                error.VariableMissing => {
+                                    if (!is_test) log.err("Template Error, variable missing {{{s}}}", .{blob[start..end]});
+                                    try out.writeAll(blob[start..end]);
+                                },
+                                else => return err,
+                            };
+                        } else {
+                            std.debug.print("init failed ?\n", .{});
+                            //try out.writeAll(blob[end..]);
+                            unreachable;
+                        }
+                    },
                 }
                 last_end = end;
-                continue;
             } else {
                 return try out.writeAll(blob[last_end..]);
             }
