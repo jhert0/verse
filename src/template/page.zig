@@ -10,7 +10,10 @@ const Kind = enum {
 const Offset = struct {
     start: usize,
     end: usize,
-    kind: Kind,
+    kind: union(enum) {
+        directive: Directive,
+        slice: void,
+    },
 };
 
 pub fn PageRuntime(comptime PageDataType: type) type {
@@ -67,6 +70,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = template.blob;
     var index: usize = 0;
+    var static: bool = true;
     // Originally attempted to write this just using index, but got catastrophic
     // backtracking errors when compiling. I'd have assumed this version would
     // be more expensive, but here we are :D
@@ -83,13 +87,20 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             index += offset;
             if (Directive.init(pblob)) |drct| {
                 const end = drct.tag_block.len;
-                found_offsets = found_offsets ++ [_]Offset{.{
+                var os = Offset{
                     .start = index,
                     .end = index + end,
-                    .kind = .directive,
-                }};
+                    .kind = .{ .directive = drct },
+                };
+                if (drct.verb == .variable) {
+                    var local: [0xff]u8 = undefined;
+                    const name = local[0..makeFieldName(drct.noun, &local)];
+                    os.kind.directive.known_offset = @offsetOf(PageDataType, name);
+                }
+                found_offsets = found_offsets ++ [_]Offset{os};
                 pblob = pblob[end..];
                 index += end;
+                static = static and drct.verb == .variable;
             } else {
                 if (indexOfPosLinear(u8, pblob, 1, "<")) |next| {
                     if (index != next) {
@@ -114,13 +125,16 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
     }
     const offset_len = found_offsets.len;
     const offsets: [offset_len]Offset = found_offsets[0..offset_len].*;
+    const static_c = static;
 
     return struct {
+        data: PageDataType,
+
         pub const Self = @This();
         pub const Kind = PageDataType;
+        pub const Static = static_c;
         pub const PageTemplate = template;
         pub const DataOffsets: [offset_len]Offset = offsets;
-        data: PageDataType,
 
         pub fn init(d: PageDataType) Page(template, PageDataType) {
             return .{ .data = d };
@@ -136,23 +150,56 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             for (Self.DataOffsets) |os| {
                 switch (os.kind) {
                     .slice => try out.writeAll(blob[os.start..os.end]),
-                    .directive => {
-                        if (Directive.init(blob[os.start..os.end])) |drct| {
-                            drct.formatTyped(PageDataType, self.data, out) catch |err| switch (err) {
-                                error.IgnoreDirective => try out.writeAll(blob[os.start..os.end]),
-                                error.VariableMissing => {
-                                    if (!is_test) log.err(
-                                        "Template Error, variable missing {{{s}}}",
-                                        .{blob[os.start..os.end]},
-                                    );
-                                    try out.writeAll(blob[os.start..os.end]);
-                                },
-                                else => return err,
-                            };
-                        } else {
-                            std.debug.print("init failed ?\n", .{});
-                            //try out.writeAll(blob[end..]);
-                            unreachable;
+                    .directive => |directive| {
+                        switch (directive.verb) {
+                            .variable => {
+                                if (directive.known_offset) |offset| {
+                                    if (directive.known_type) |_| {
+                                        directive.formatTyped(PageDataType, self.data, out) catch unreachable;
+                                        continue;
+                                    }
+
+                                    const ptr: [*]const u8 = @ptrCast(&self.data);
+                                    switch (directive.otherwise) {
+                                        .required => {
+                                            const vari: *const []const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                                            try out.writeAll(vari.*);
+                                        },
+                                        .ignore => {
+                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                                            if (vari.*) |v|
+                                                try out.writeAll(v);
+                                        },
+                                        .delete => {
+                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                                            if (vari.*) |v|
+                                                try out.writeAll(v);
+                                        },
+                                        .default => |default| {
+                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                                            if (vari.*) |v| {
+                                                try out.writeAll(v);
+                                            } else {
+                                                try out.writeAll(default);
+                                            }
+                                        },
+                                        else => unreachable,
+                                    }
+                                }
+                            },
+                            else => {
+                                directive.formatTyped(PageDataType, self.data, out) catch |err| switch (err) {
+                                    error.IgnoreDirective => try out.writeAll(blob[os.start..os.end]),
+                                    error.VariableMissing => {
+                                        if (!is_test) log.err(
+                                            "Template Error, variable missing {{{s}}}",
+                                            .{blob[os.start..os.end]},
+                                        );
+                                        try out.writeAll(blob[os.start..os.end]);
+                                    },
+                                    else => return err,
+                                };
+                            },
                         }
                     },
                 }
@@ -162,6 +209,25 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
     };
+}
+
+const makeFieldName = Templates.makeFieldName;
+fn typeField(T: type, name: []const u8, data: T) ?[]const u8 {
+    if (@typeInfo(T) != .Struct) return null;
+    var local: [0xff]u8 = undefined;
+    const realname = local[0..makeFieldName(name, &local)];
+    inline for (std.meta.fields(T)) |field| {
+        if (eql(u8, field.name, realname)) {
+            switch (field.type) {
+                []const u8,
+                ?[]const u8,
+                => return @field(data, field.name),
+
+                else => return null,
+            }
+        }
+    }
+    return null;
 }
 
 const std = @import("std");

@@ -1,8 +1,9 @@
 verb: Verb,
 noun: []const u8,
 otherwise: Otherwise,
-known_type: ?KnownType = null,
 tag_block: []const u8,
+known_type: ?KnownType = null,
+known_offset: ?usize = null,
 
 pub const Directive = @This();
 
@@ -12,6 +13,7 @@ pub const Otherwise = union(enum) {
     delete: void,
     default: []const u8,
     template: *const Template.Template,
+    //page: type,
     blob: []const u8,
 };
 
