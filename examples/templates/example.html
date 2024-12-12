@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Welcome to the Verse!</title>
+  </head>
+  <body>
+    <content>
+      <!-- You can run and experiment with this example with `zig build run-template` -->
+      <h1>Verse Template Example</h1>
+      <!-- Simple Variables that can be replaced by simple slice -->
+      <p><SimpleVariable /></p>
+      <!-- The trailing / is optional in Verse, but the HTML is likely invalid -->
+      <p><SimpleVariable></p>
+      <!-- Adding or removing variables will generate a compile error. -->
+      <!-- The leading space will cause Verse to ignore this tag -->
+      <!-- Because this var is not provided using it will cause an error. -->
+      <p>< RequiredButMissing /></p>
+      <!-- Deleting the next tag, will also cause a compile error because -->
+      <!-- this variable is provided by the example endpoint. -->
+      <p><RequiredAndProvided /></p>
+
+
+      <!-- All variables are required by default, but you can use null as well -->
+      <p><NullVariable ornull /></p>
+      <!-- You can specify your own default via the HTML as well -->
+      <p><DefaultProvided default="This default will be replaced by the endpoint" /></p>
+      <p><DefaultMissing default="This default will used here" /></p>
+      <!-- Providing valid slices gives you more control of the memory needed -->
+      <!-- generate any HTML, but there is support for some Zig types -->
+      <p>The first number: <PositiveNumber type="usize" /></p>
+
+
+      <!-- Once a name exists, you can't not change the type -->
+      <!-- The following tags would be invalid and cause a compile error -->
+      <!-- < SimpleVariable ornull /> -->
+      <!-- < SimpleVariable default="Invalid" /></p> -->
+      <!-- < SimpleVariable type="usize" /></p> -->
+
+      <!-- Some logic is also supported -->
+      <!-- TODO Write and Document-->
+      <With OptionalWith>
+      <p>These internal tags are only seen if optional is defined</p>
+      </With>
+      <!-- 
+        < For Loop></For>
+        < Split Slices></For>
+        < Build TemplateVars _template_name.html />
+      -->
+    </content>
+  </body>
+</html>

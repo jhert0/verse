@@ -3,21 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const module = b.addModule("verse", .{
+    const verse_lib = b.addModule("verse", .{
         .root_source_file = b.path("src/verse.zig"),
         .target = target,
         .optimize = optimize,
     });
-
-    const t_compiler = b.addExecutable(.{
-        .name = "template-compiler",
-        .root_source_file = b.path("src/template-compiler.zig"),
-        .target = target,
-    });
-
-    const tc_build_run = b.addRunArtifact(t_compiler);
-    const tc_build_step = b.step("templates", "Compile templates down into struct");
-    tc_build_step.dependOn(&tc_build_run.step);
 
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/verse.zig"),
@@ -29,6 +19,7 @@ pub fn build(b: *std.Build) !void {
 
     if (std.fs.cwd().access("src/fallback_html/index.html", .{})) {
         compiler.addDir("src/fallback_html/");
+        compiler.addDir("examples/templates/");
         compiler.collect() catch unreachable;
         const comptime_templates = compiler.buildTemplates() catch unreachable;
         // Zig build time doesn't expose it's state in a way I know how to check...
@@ -42,6 +33,7 @@ pub fn build(b: *std.Build) !void {
     const examples = [_][]const u8{
         "basic",
         "cookies",
+        "template",
     };
     for (examples) |example| {
         const path = try std.fmt.allocPrint(b.allocator, "examples/{s}.zig", .{example});
@@ -54,7 +46,12 @@ pub fn build(b: *std.Build) !void {
         // All Examples should compile for tests to pass
         test_step.dependOn(&example_exe.step);
 
-        example_exe.root_module.addImport("verse", module);
+        example_exe.root_module.addImport("verse", verse_lib);
+
+        const comptime_structs = compiler.buildStructs() catch unreachable;
+        verse_lib.addImport("comptime_structs", comptime_structs);
+        const comptime_templates = compiler.buildTemplates() catch unreachable;
+        verse_lib.addImport("comptime_templates", comptime_templates);
 
         const run_example = b.addRunArtifact(example_exe);
         run_example.step.dependOn(b.getInstallStep());
@@ -77,6 +74,7 @@ pub const Compiler = struct {
     collected: std.ArrayList([]const u8),
     templates: ?*std.Build.Module = null,
     structs: ?*std.Build.Module = null,
+    debugging: bool = false,
 
     pub fn init(b: *std.Build) Compiler {
         return .{
@@ -139,7 +137,7 @@ pub const Compiler = struct {
     pub fn buildStructs(self: *Compiler) !*std.Build.Module {
         if (self.structs) |s| return s;
 
-        //std.debug.print("building structs for {}\n", .{self.collected.items.len});
+        if (self.debugging) std.debug.print("building structs for {}\n", .{self.collected.items.len});
         const local_dir = std.fs.path.dirname(@src().file) orelse ".";
         const t_compiler = self.b.addExecutable(.{
             .name = "template-compiler",
@@ -153,8 +151,6 @@ pub const Compiler = struct {
         t_compiler.root_module.addImport("comptime_templates", comptime_templates);
         const tc_build_run = self.b.addRunArtifact(t_compiler);
         const tc_structs = tc_build_run.addOutputFileArg("compiled-structs.zig");
-        const tc_build_step = self.b.step("templates", "Compile templates down into struct");
-        tc_build_step.dependOn(&tc_build_run.step);
         const module = self.b.createModule(.{
             .root_source_file = tc_structs,
         });
