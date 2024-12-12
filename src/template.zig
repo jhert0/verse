@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const eql = std.mem.eql;
+const endsWith = std.mem.endsWith;
+const indexOfScalar = std.mem.indexOfScalar;
 const allocPrint = std.fmt.allocPrint;
 const log = std.log.scoped(.Verse);
 
@@ -35,7 +37,7 @@ pub const Template = struct {
 };
 
 fn tailPath(path: []const u8) []const u8 {
-    if (std.mem.indexOf(u8, path, "/")) |i| {
+    if (indexOfScalar(u8, path, '/')) |i| {
         return path[i + 1 ..];
     }
     return path[0..0];
@@ -118,7 +120,17 @@ pub fn findTemplate(comptime name: []const u8) Template {
             return bi;
         }
     }
-    @compileError("template " ++ name ++ " not found!");
+
+    var errstr: [:0]const u8 = "Template " ++ name ++ " not found!";
+    inline for (builtin) |bi| {
+        if (comptime endsWith(u8, bi.name, name)) {
+            errstr = errstr ++ "\nDid you mean" ++ " " ++ bi.name ++ "?";
+        }
+    }
+    // If you're reading this, it's probably because your template.html is
+    // either missing, not included in the build.zig search dirs, or typo'd.
+    // But it's important for you to know... I hope you have a good day :)
+    @compileError(errstr);
 }
 
 pub fn PageData(comptime name: []const u8) type {

@@ -9,7 +9,6 @@ pub const Directive = @This();
 
 pub const Otherwise = union(enum) {
     required: void,
-    ignore: void,
     delete: void,
     default: []const u8,
     template: *const Template.Template,
@@ -255,7 +254,7 @@ fn validChar(c: u8) bool {
 fn calcBodyS(comptime _: []const u8, _: []const u8, blob: []const u8, end: usize) ?struct { Otherwise, usize } {
     if (blob.len <= end) return null;
     return .{
-        .{ .ignore = {} },
+        .{ .required = {} },
         end + 1,
     };
 }
@@ -274,8 +273,11 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
         else => return null,
     }
 
-    var start = 1 + (indexOf(u8, blob, ">") orelse return null);
+    var start = 1 + (indexOfPosLinear(u8, blob, 0, ">") orelse return null);
     var close_pos: usize = indexOfPosLinear(u8, blob, 0, close) orelse return null;
+    // count is not comptime compliant while it uses indexOfPos increasing
+    // backward branches. I've raised the quota, but complicated templates might
+    // require a naive implementation
     var skip = count(u8, blob[start..close_pos], open);
     while (skip > 0) : (skip -= 1) {
         close_pos = indexOfPosLinear(u8, blob, close_pos + 1, close) orelse close_pos;
@@ -448,7 +450,6 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
                 switch (d.otherwise) {
                     .default => |str| try out.writeAll(str),
                     // Not really an error, just instruct caller to print original text
-                    .ignore => return error.IgnoreDirective,
                     .required => return error.VariableMissing,
                     .delete => {},
                     .template => |template| {

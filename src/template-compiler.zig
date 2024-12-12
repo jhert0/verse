@@ -147,7 +147,7 @@ fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
                         var kind = try bufPrint(&buffer, ": []const u8,\n", .{});
 
                         switch (drct.otherwise) {
-                            .required, .ignore => {},
+                            .required => {},
                             .default => |str| {
                                 kind = try bufPrint(&buffer, ": []const u8 = \"{s}\",\n", .{str});
                             },

@@ -6,7 +6,7 @@ pub const FileData = struct {
 };
 
 pub const data: [Found.names.len]FileData = blk: {
-    @setEvalBranchQuota(5000);
+    @setEvalBranchQuota(1000);
     var t: [Found.names.len]FileData = undefined;
     for (Found.names, &t) |file, *dst| {
         dst.* = FileData{

@@ -66,7 +66,7 @@ pub fn PageRuntime(comptime PageDataType: type) type {
 }
 
 pub fn Page(comptime template: Template, comptime PageDataType: type) type {
-    @setEvalBranchQuota(5000);
+    @setEvalBranchQuota(10000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = template.blob;
     var index: usize = 0;
@@ -160,30 +160,22 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                                     }
 
                                     const ptr: [*]const u8 = @ptrCast(&self.data);
+                                    var vari: ?[]const u8 = null;
                                     switch (directive.otherwise) {
                                         .required => {
-                                            const vari: *const []const u8 = @ptrCast(@alignCast(&ptr[offset]));
-                                            try out.writeAll(vari.*);
-                                        },
-                                        .ignore => {
-                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
-                                            if (vari.*) |v|
-                                                try out.writeAll(v);
+                                            vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[offset]))).*;
                                         },
                                         .delete => {
-                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
-                                            if (vari.*) |v|
-                                                try out.writeAll(v);
+                                            vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[offset]))).*;
                                         },
                                         .default => |default| {
-                                            const vari: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
-                                            if (vari.*) |v| {
-                                                try out.writeAll(v);
-                                            } else {
-                                                try out.writeAll(default);
-                                            }
+                                            const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                                            vari = if (sptr.*) |sp| sp else default;
                                         },
                                         else => unreachable,
+                                    }
+                                    if (vari) |v| {
+                                        try out.writeAll(v);
                                     }
                                 }
                             },
