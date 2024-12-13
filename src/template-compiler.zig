@@ -160,7 +160,6 @@ fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
                                 kind = try bufPrint(&buffer, ": ?{s},\n", .{s_name});
                                 f_name = makeFieldName(drct.noun[1 .. drct.noun.len - 5]);
                             },
-                            .blob => unreachable,
                         }
                         if (drct.known_type) |kt| {
                             kind = try bufPrint(&buffer, ": {s},\n", .{@tagName(kt)});
@@ -182,7 +181,7 @@ fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
                                 var buffer: [0xFF]u8 = undefined;
                                 const kind = try bufPrint(&buffer, ": []const {s},\n", .{s_name});
                                 try current.append(f_name, kind);
-                                try emitVars(a, drct.otherwise.blob, this);
+                                try emitVars(a, drct.tag_block_body.?, this);
                             },
                             .split => {
                                 var buffer: [0xFF]u8 = undefined;
@@ -193,7 +192,7 @@ fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
                                 var buffer: [0xFF]u8 = undefined;
                                 const kind = try bufPrint(&buffer, ": ?{s},\n", .{s_name});
                                 try current.append(f_name, kind);
-                                try emitVars(a, drct.otherwise.blob, this);
+                                try emitVars(a, drct.tag_block_body.?, this);
                             },
                             .build => {
                                 var buffer: [0xFF]u8 = undefined;

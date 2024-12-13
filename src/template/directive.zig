@@ -2,6 +2,7 @@ verb: Verb,
 noun: []const u8,
 otherwise: Otherwise,
 tag_block: []const u8,
+tag_block_body: ?[]const u8 = null,
 known_type: ?KnownType = null,
 known_offset: ?usize = null,
 
@@ -13,7 +14,6 @@ pub const Otherwise = union(enum) {
     default: []const u8,
     template: *const Template.Template,
     //page: type,
-    blob: []const u8,
 };
 
 pub const Verb = enum {
@@ -125,19 +125,19 @@ fn initNoun(noun: []const u8, tag: []const u8) ?Directive {
 }
 
 pub fn initVerb(verb: []const u8, noun: []const u8, blob: []const u8) ?Directive {
-    var otherw: struct { Directive.Otherwise, usize } = undefined;
+    var end: ?usize = null;
     var word: Verb = undefined;
     if (eql(u8, verb, "For")) {
-        otherw = calcBody("For", noun, blob) orelse return null;
+        end = calcBody("For", noun, blob) orelse return null;
         word = .foreach;
     } else if (eql(u8, verb, "Split")) {
-        otherw = calcBody("Split", noun, blob) orelse return null;
+        end = calcBody("Split", noun, blob) orelse return null;
         word = .split;
     } else if (eql(u8, verb, "With")) {
-        otherw = calcBody("With", noun, blob) orelse return null;
+        end = calcBody("With", noun, blob) orelse return null;
         word = .with;
     } else if (eql(u8, verb, "With")) {
-        otherw = calcBody("With", noun, blob) orelse return null;
+        end = calcBody("With", noun, blob) orelse return null;
         word = .with;
     } else if (eql(u8, verb, "Build")) {
         const b_noun = noun[1..(indexOfScalarPos(u8, noun, 1, ' ') orelse return null)];
@@ -179,13 +179,17 @@ pub fn initVerb(verb: []const u8, noun: []const u8, blob: []const u8) ?Directive
     //    }
     //} else return null;
 
-    var end = (indexOf(u8, noun, ">") orelse noun.len);
-    if (noun[end - 1] == '/') end -= 1;
+    var end2 = (indexOf(u8, noun, ">") orelse noun.len);
+    if (noun[end2 - 1] == '/') end2 -= 1;
+    const body_start = 1 + (indexOfPosLinear(u8, blob, 0, ">") orelse return null);
+    const body_end: usize = end.? - @as(usize, if (word == .foreach) 6 else if (word == .with) 7 else 0);
+    const tag_block_body = blob[body_start..body_end];
     return .{
         .verb = word,
-        .noun = noun[1..end],
-        .otherwise = otherw[0],
-        .tag_block = blob[0..otherw[1]],
+        .noun = noun[1..end2],
+        .otherwise = .required,
+        .tag_block = blob[0..end.?],
+        .tag_block_body = tag_block_body,
     };
 }
 
@@ -251,7 +255,7 @@ fn validChar(c: u8) bool {
     };
 }
 
-fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?struct { Otherwise, usize } {
+fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?usize {
     const open: *const [keyword.len + 2]u8 = "<" ++ keyword ++ " ";
     const close: *const [keyword.len + 3]u8 = "</" ++ keyword ++ ">";
 
@@ -260,7 +264,7 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
     while (shape_i < blob.len and blob[shape_i] != '/' and blob[shape_i] != '>')
         shape_i += 1;
     switch (blob[shape_i]) {
-        '/' => return if (blob.len <= shape_i + 1) null else .{ .{ .required = {} }, shape_i + 2 },
+        '/' => return if (blob.len <= shape_i + 1) null else shape_i + 2,
         '>' => {},
         else => return null,
     }
@@ -276,8 +280,6 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
     }
 
     const end = close_pos + close.len;
-    const end_ws = end - close.len;
-    const start_ws = start;
     while (start < end and isWhitespace(blob[start])) : (start +|= 1) {}
 
     //while (endws > start and isWhitespace(blob[endws])) : (endws -|= 1) {}
@@ -287,10 +289,7 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
     while (width < noun.len and validChar(noun[width])) {
         width += 1;
     }
-    return .{
-        .{ .blob = blob[start_ws..end_ws] },
-        end,
-    };
+    return end;
 }
 
 fn isStringish(t: type) bool {
@@ -370,7 +369,7 @@ pub fn forEachTyped(self: Directive, T: type, data: T, out: anytype) anyerror!vo
         .data = data,
         .template = .{
             .name = self.noun,
-            .blob = trimLeft(u8, self.otherwise.blob, whitespace),
+            .blob = trimLeft(u8, self.tag_block_body.?, whitespace),
         },
     };
     try p.format("", .{}, out);
@@ -381,7 +380,7 @@ pub fn withTyped(self: Directive, T: type, block: T, out: anytype) anyerror!void
         .data = block,
         .template = if (self.otherwise == .template) self.otherwise.template.* else .{
             .name = self.noun,
-            .blob = trim(u8, self.otherwise.blob, whitespace),
+            .blob = trim(u8, self.tag_block_body.?, whitespace),
         },
     };
     try p.format("", .{}, out);
@@ -482,7 +481,6 @@ pub fn formatTyped(d: Directive, comptime T: type, ctx: T, out: anytype) !void {
                     //        try page.format("{}", .{}, out);
                     //    }
                     //}
-                    .blob => unreachable,
                 }
             }
         },
