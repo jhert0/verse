@@ -37,14 +37,6 @@ pub const KnownType = enum {
     }
 };
 
-const Positions = struct {
-    start: usize,
-    start_ws: usize,
-    end: usize,
-    end_ws: usize,
-    width: usize,
-};
-
 pub fn init(str: []const u8) ?Directive {
     if (str.len < 2) return null;
     if (!isUpper(str[1]) and str[1] != '_') return null;
