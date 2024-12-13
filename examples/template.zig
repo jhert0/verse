@@ -52,6 +52,9 @@ fn index(verse: *Verse) Router.Error!void {
         // A default isn't provided for .optional, because With statements, require
         // an explicit decision.
         .optional_with = null,
+        .namespaced_with = .{
+            .simple_variable = "This is a different variable from above",
+        },
     });
 
     try verse.sendPage(&page);

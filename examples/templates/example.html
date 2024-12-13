@@ -39,10 +39,22 @@
       -->
 
       <!-- Some logic is also supported -->
-      <!-- TODO Write and Document-->
       <With OptionalWith>
-      <p>These internal tags are only seen if optional is defined</p>
+      <p>These internal tags are only seen if optional is defined.</p>
+      <p>Because there are no variables within this With block,
+      the generated struct is empty. Inspecting the generated types
+      will look similar to <pre>pub const OptionalWith = struct{};</pre>.
+      `null` or `.{}` are acceptable values.</p>
       </With>
+
+      <!-- With also allows you to create a pseudo-namespace -->
+      <With NamespacedWith>
+      <!-- Be careful when using blocks in this way. Preventing variable -->
+      <!-- name shadowing equal to zig is a still a planned future goal -->
+        <p>Namespaced Variable : <SimpleVariable /></p>
+      </With>
+
+      <!-- TODO Write and Document-->
       <!--
         < For Loop></For>
         < Split Slices></For>

@@ -102,7 +102,7 @@ pub fn commentTag(blob: []const u8) ?usize {
 }
 
 pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offset {
-    @setEvalBranchQuota(6000);
+    @setEvalBranchQuota(10000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = html;
     var index: usize = 0;
