@@ -65,10 +65,31 @@ pub fn PageRuntime(comptime PageDataType: type) type {
     };
 }
 
-fn getOffset(T: type, name: []const u8) usize {
+fn getOffset(T: type, name: []const u8) ?usize {
+    switch (@typeInfo(T)) {
+        .Struct => {
+            var local: [0xff]u8 = undefined;
+            const field = local[0..makeFieldName(name, &local)];
+            return @offsetOf(T, field);
+        },
+        else => return null,
+    }
+}
+
+fn getChildType(T: type, name: []const u8) type {
     var local: [0xff]u8 = undefined;
     const field = local[0..makeFieldName(name, &local)];
-    return @offsetOf(T, field);
+    //return @TypeOf(@FieldType(T, field)); // not in 0.13.0
+    for (std.meta.fields(T)) |f| {
+        if (eql(u8, f.name, field)) {
+            switch (@typeInfo(f.type)) {
+                .Pointer => |ptr| return ptr.child,
+                .Optional => |opt| return opt.child,
+                .Struct => return f.type,
+                else => unreachable,
+            }
+        }
+    } else unreachable;
 }
 
 pub fn commentTag(blob: []const u8) ?usize {
@@ -109,6 +130,12 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                 if (drct.verb == .variable and PageDataType != void) {
                     os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
                 }
+
+                // left in for testing
+                if (drct.tag_block_body) |body| {
+                    _ = validateBlock(body, getChildType(PageDataType, drct.noun));
+                }
+
                 found_offsets = found_offsets ++ [_]Offset{os};
                 pblob = pblob[end..];
                 index += end;
