@@ -80,13 +80,12 @@ pub fn commentTag(blob: []const u8) ?usize {
     return null;
 }
 
-pub fn Page(comptime template: Template, comptime PageDataType: type) type {
-    @setEvalBranchQuota(10000);
+pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offset {
+    @setEvalBranchQuota(6000);
     var found_offsets: []const Offset = &[0]Offset{};
-    var pblob = template.blob;
+    var pblob = html;
     var index: usize = 0;
     var open_idx: usize = 0;
-    var static: bool = true;
     // Originally attempted to write this just using index, but got catastrophic
     // backtracking errors when compiling. I'd have assumed this version would
     // be more expensive, but here we are :D
@@ -107,14 +106,13 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     .end = index + end,
                     .kind = .{ .directive = drct },
                 };
-                if (drct.verb == .variable) {
+                if (drct.verb == .variable and PageDataType != void) {
                     os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
                 }
                 found_offsets = found_offsets ++ [_]Offset{os};
                 pblob = pblob[end..];
                 index += end;
                 open_idx = index;
-                static = static and drct.verb == .variable;
             } else if (commentTag(pblob)) |skip| {
                 pblob = pblob[skip..];
                 index += skip;
@@ -133,18 +131,20 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             .kind = .slice,
         }};
     }
-    const offset_len = found_offsets.len;
-    const offsets: [offset_len]Offset = found_offsets[0..offset_len].*;
-    const static_c = static;
+    return found_offsets;
+}
+
+pub fn Page(comptime template: Template, comptime PageDataType: type) type {
+    const offsets = validateBlock(template.blob, PageDataType);
+    const offset_len = offsets.len;
 
     return struct {
         data: PageDataType,
 
         pub const Self = @This();
         pub const Kind = PageDataType;
-        pub const Static = static_c;
         pub const PageTemplate = template;
-        pub const DataOffsets: [offset_len]Offset = offsets;
+        pub const DataOffsets: [offset_len]Offset = offsets[0..offset_len].*;
 
         pub fn init(d: PageDataType) Page(template, PageDataType) {
             return .{ .data = d };
