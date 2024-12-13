@@ -251,14 +251,6 @@ fn validChar(c: u8) bool {
     };
 }
 
-fn calcBodyS(comptime _: []const u8, _: []const u8, blob: []const u8, end: usize) ?struct { Otherwise, usize } {
-    if (blob.len <= end) return null;
-    return .{
-        .{ .required = {} },
-        end + 1,
-    };
-}
-
 fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?struct { Otherwise, usize } {
     const open: *const [keyword.len + 2]u8 = "<" ++ keyword ++ " ";
     const close: *const [keyword.len + 3]u8 = "</" ++ keyword ++ ">";
@@ -268,7 +260,7 @@ fn calcBody(comptime keyword: []const u8, noun: []const u8, blob: []const u8) ?s
     while (shape_i < blob.len and blob[shape_i] != '/' and blob[shape_i] != '>')
         shape_i += 1;
     switch (blob[shape_i]) {
-        '/' => return calcBodyS(keyword, noun, blob, shape_i + 1),
+        '/' => return if (blob.len <= shape_i + 1) null else .{ .{ .required = {} }, shape_i + 2 },
         '>' => {},
         else => return null,
     }
