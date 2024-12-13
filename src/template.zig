@@ -796,8 +796,8 @@ test "directive typed ?usize null" {
 
     const FE = struct { number: ?usize };
 
-    const t = Template{ .name = "test", .blob = blob };
-    const page = Page(t, FE);
+    const Temp = Template{ .name = "test", .blob = blob };
+    const page = Page(Temp, FE);
 
     const slice = FE{ .number = null };
     const pg = page.init(slice);
@@ -811,14 +811,55 @@ test "directive typed isize" {
     const blob = "<Number type=\"isize\" />";
     const expected: []const u8 = "-420";
 
-    const FE = struct { number: isize };
+    const PData = struct {
+        number: isize,
+    };
+    const Temp = Template{ .name = "test", .blob = blob };
+    const PType = Page(Temp, PData);
 
+    const data = PData{ .number = -420 };
+    const print = try allocPrint(a, "{}", .{PType.init(data)});
+    defer a.free(print);
+    try std.testing.expectEqualStrings(expected, print);
+}
+
+test "grouped offsets" {
+    const blob =
+        \\<html>
+        \\  <div>
+        \\    <p>
+        \\      <span>text</span>
+        \\    </p>
+        \\  </div>
+        \\</html>
+    ;
+    const Temp = Template{ .name = "test", .blob = blob };
+    const PData = struct {};
+    const PType = Page(Temp, PData);
+    try std.testing.expectEqual(1, PType.DataOffsets.len);
+    var a = std.testing.allocator;
+    const print = try allocPrint(a, "{}", .{PType.init(PData{})});
+    defer a.free(print);
+    const expected = blob;
+    try std.testing.expectEqualStrings(expected, print);
+}
+
+test "comment tags" {
+    var a = std.testing.allocator;
+
+    const blob =
+        \\<!-- <ValidButInComment /> -->
+    ;
+
+    const PData = struct {};
     const t = Template{ .name = "test", .blob = blob };
-    const page = Page(t, FE);
+    const PType = Page(t, PData);
 
-    const slice = FE{ .number = -420 };
-    const pg = page.init(slice);
-    const p = try allocPrint(a, "{}", .{pg});
-    defer a.free(p);
-    try std.testing.expectEqualStrings(expected, p);
+    const data = PData{};
+    const expected = blob;
+
+    const page = try allocPrint(a, "{}", .{PType.init(data)});
+    defer a.free(page);
+
+    try std.testing.expectEqualStrings(expected, page);
 }

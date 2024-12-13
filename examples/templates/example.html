@@ -32,16 +32,18 @@
 
       <!-- Once a name exists, you can't not change the type -->
       <!-- The following tags would be invalid and cause a compile error -->
-      <!-- < SimpleVariable ornull /> -->
-      <!-- < SimpleVariable default="Invalid" /></p> -->
-      <!-- < SimpleVariable type="usize" /></p> -->
+      <!--
+        <SimpleVariable ornull />
+        <SimpleVariable default="Invalid" /></p>
+        <SimpleVariable type="usize" /></p>
+      -->
 
       <!-- Some logic is also supported -->
       <!-- TODO Write and Document-->
       <With OptionalWith>
       <p>These internal tags are only seen if optional is defined</p>
       </With>
-      <!-- 
+      <!--
         < For Loop></For>
         < Split Slices></For>
         < Build TemplateVars _template_name.html />

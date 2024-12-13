@@ -65,11 +65,27 @@ pub fn PageRuntime(comptime PageDataType: type) type {
     };
 }
 
+fn getOffset(T: type, name: []const u8) usize {
+    var local: [0xff]u8 = undefined;
+    const field = local[0..makeFieldName(name, &local)];
+    return @offsetOf(T, field);
+}
+
+pub fn commentTag(blob: []const u8) ?usize {
+    if (blob.len > 2 and blob[1] == '!' and blob.len > 4 and blob[2] == '-' and blob[3] == '-') {
+        if (indexOfPosLinear(u8, blob, 4, "-->")) |comment| {
+            return comment + 3;
+        }
+    }
+    return null;
+}
+
 pub fn Page(comptime template: Template, comptime PageDataType: type) type {
     @setEvalBranchQuota(10000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = template.blob;
     var index: usize = 0;
+    var open_idx: usize = 0;
     var static: bool = true;
     // Originally attempted to write this just using index, but got catastrophic
     // backtracking errors when compiling. I'd have assumed this version would
@@ -77,15 +93,14 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
     while (pblob.len > 0) {
         if (indexOfScalar(u8, pblob, '<')) |offset| {
             pblob = pblob[offset..];
-            if (index != offset and offset != 0) {
-                found_offsets = found_offsets ++ [_]Offset{.{
-                    .start = index,
-                    .end = index + offset,
-                    .kind = .slice,
-                }};
-            }
             index += offset;
             if (Directive.init(pblob)) |drct| {
+                found_offsets = found_offsets ++ [_]Offset{.{
+                    .start = open_idx,
+                    .end = index,
+                    .kind = .slice,
+                }};
+
                 const end = drct.tag_block.len;
                 var os = Offset{
                     .start = index,
@@ -93,33 +108,28 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     .kind = .{ .directive = drct },
                 };
                 if (drct.verb == .variable) {
-                    var local: [0xff]u8 = undefined;
-                    const name = local[0..makeFieldName(drct.noun, &local)];
-                    os.kind.directive.known_offset = @offsetOf(PageDataType, name);
+                    os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
                 }
                 found_offsets = found_offsets ++ [_]Offset{os};
                 pblob = pblob[end..];
                 index += end;
+                open_idx = index;
                 static = static and drct.verb == .variable;
+            } else if (commentTag(pblob)) |skip| {
+                pblob = pblob[skip..];
+                index += skip;
             } else {
                 if (indexOfPosLinear(u8, pblob, 1, "<")) |next| {
-                    if (index != next) {
-                        found_offsets = found_offsets ++ [_]Offset{.{
-                            .start = index,
-                            .end = index + next,
-                            .kind = .slice,
-                        }};
-                    }
-                    index += next;
                     pblob = pblob[next..];
+                    index += next;
                 } else break;
             }
         } else break;
     }
     if (index != pblob.len) {
         found_offsets = found_offsets ++ [_]Offset{.{
-            .start = index,
-            .end = index + pblob.len,
+            .start = open_idx,
+            .end = open_idx + pblob.len,
             .kind = .slice,
         }};
     }

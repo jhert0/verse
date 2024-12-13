@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const eql = std.mem.eql;
 const bufPrint = std.fmt.bufPrint;
+const indexOf = std.mem.indexOf;
+const indexOfPos = std.mem.indexOfPos;
 const compiled = @import("comptime_templates");
 const Template = @import("template.zig");
 
@@ -135,7 +137,7 @@ pub fn main() !void {
 fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
     var data = fdata;
     while (data.len > 0) {
-        if (std.mem.indexOf(u8, data, "<")) |offset| {
+        if (indexOf(u8, data, "<")) |offset| {
             data = data[offset..];
             if (Template.Directive.init(data)) |drct| {
                 data = data[drct.tag_block.len..];
@@ -203,7 +205,9 @@ fn emitVars(a: Allocator, fdata: []const u8, current: *AbstTree) !void {
                         }
                     },
                 }
-            } else if (std.mem.indexOfPos(u8, data, 1, "<")) |next| {
+            } else if (Template.Pages.commentTag(data)) |skip| {
+                data = data[skip..];
+            } else if (indexOfPos(u8, data, 1, "<")) |next| {
                 data = data[next..];
             } else return;
         } else return;
