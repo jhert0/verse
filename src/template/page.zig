@@ -127,7 +127,10 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                     .end = index + end,
                     .kind = .{ .directive = drct },
                 };
-                if (drct.verb == .variable and PageDataType != void) {
+                if (drct.verb == .variable) {
+                    // TODO FIXME There is a really nasty bug here, where after
+                    // the first recurse, it will calculate the offsets based on
+                    // the root type, and not for the child type.
                     os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
                 }
 
