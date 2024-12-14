@@ -116,6 +116,7 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
     // be more expensive, but here we are :D
     while (pblob.len > 0) {
         if (indexOfScalar(u8, pblob, '<')) |offset| {
+            // TODO this implementation makes tracking whitespace much harder.
             pblob = pblob[offset..];
             index += offset;
             if (Directive.init(pblob)) |drct| {
@@ -141,21 +142,34 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                     },
                     .split => {
                         // TODO Split needs whitespace postfix
-                        found_offsets = found_offsets ++
-                            [_]Offset{
-                            .{
-                                .start = index + drct.tag_block.len,
-                                .end = index + end,
-                                .kind = .{
-                                    .array = .{
-                                        .name = drct.noun,
-                                        .len = 1,
-                                        //.extra = body_start,
-                                    },
+                        const ws_start: usize = offset + end;
+                        var wsidx = ws_start;
+                        while (wsidx < pblob.len and
+                            (pblob[wsidx] == ' ' or pblob[wsidx] == '\t' or
+                            pblob[wsidx] == '\n' or pblob[wsidx] == '\r'))
+                        {
+                            wsidx += 1;
+                        }
+                        if (wsidx > 0) {
+                            found_offsets = found_offsets ++ [_]Offset{
+                                .{
+                                    .start = index + drct.tag_block.len,
+                                    .end = index + wsidx,
+                                    .kind = .{ .array = .{ .name = drct.noun, .len = 2 } },
                                 },
-                            },
-                            os,
-                        };
+                                os,
+                                .{ .start = 0, .end = wsidx - end, .kind = .slice },
+                            };
+                        } else {
+                            found_offsets = found_offsets ++ [_]Offset{
+                                .{
+                                    .start = index + drct.tag_block.len,
+                                    .end = index + end,
+                                    .kind = .{ .array = .{ .name = drct.noun, .len = 1 } },
+                                },
+                                os,
+                            };
+                        }
                     },
                     else => {
                         // left in for testing
@@ -164,17 +178,10 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                                 body,
                                 getChildType(PageDataType, drct.noun),
                             );
-                            found_offsets = found_offsets ++
-                                [_]Offset{.{
+                            found_offsets = found_offsets ++ [_]Offset{.{
                                 .start = index + drct.tag_block_skip.?,
                                 .end = index + end,
-                                .kind = .{
-                                    .array = .{
-                                        .name = drct.noun,
-                                        .len = loop.len,
-                                        //.extra = body_start,
-                                    },
-                                },
+                                .kind = .{ .array = .{ .name = drct.noun, .len = loop.len } },
                             }} ++ loop;
                         } else {
                             found_offsets = found_offsets ++ [_]Offset{os};
@@ -251,11 +258,19 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
         fn offsetArrayItem(T: type, list: []const T, ofs: []const Offset, html: []const u8, out: anytype) !void {
             //std.debug.print("item {any}\n", .{T});
             if (T == []const u8) {
-                for (list) |item| try out.writeAll(item);
-            }
-
-            for (list) |item| {
-                try formatDirective(T, item, ofs, html, out);
+                for (list) |item| {
+                    try out.writeAll(item);
+                    // I should find a better way to write this hack
+                    if (ofs.len == 2) {
+                        if (ofs[1].kind == .slice) {
+                            try out.writeAll(html[ofs[1].start..ofs[1].end]);
+                        }
+                    }
+                }
+            } else {
+                for (list) |item| {
+                    try formatDirective(T, item, ofs, html, out);
+                }
             }
         }
 

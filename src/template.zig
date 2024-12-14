@@ -684,7 +684,7 @@ test "directive Split" {
         \\
     ;
 
-    const FE = struct {
+    const SplitS = struct {
         slice: []const []const u8,
     };
 
@@ -693,9 +693,9 @@ test "directive Split" {
         .name = "test",
         .blob = blob,
     };
-    const page = Page(t, FE);
+    const page = Page(t, SplitS);
 
-    const slice = FE{
+    const slice = SplitS{
         .slice = &[_][]const u8{
             "Alice",
             "Bob",
@@ -706,9 +706,7 @@ test "directive Split" {
     const pg = page.init(slice);
     const p = try allocPrint(a, "{}", .{pg});
     defer a.free(p);
-    // I'm catching this error and skipping because it's needs a deeper time
-    // investment, and I need to create a commit checkpoint
-    std.testing.expectEqualStrings(expected, p) catch return error.SkipZigTest;
+    try std.testing.expectEqualStrings(expected, p);
 }
 
 test "directive Build" {
