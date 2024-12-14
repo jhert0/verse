@@ -3,6 +3,7 @@ noun: []const u8,
 otherwise: Otherwise,
 tag_block: []const u8,
 tag_block_body: ?[]const u8 = null,
+tag_block_skip: ?usize = null,
 known_type: ?KnownType = null,
 known_offset: ?usize = null,
 
@@ -182,6 +183,7 @@ pub fn initVerb(verb: []const u8, noun: []const u8, blob: []const u8) ?Directive
         .otherwise = .required,
         .tag_block = blob[0..end.?],
         .tag_block_body = tag_block_body,
+        .tag_block_skip = body_start,
     };
 }
 
@@ -344,7 +346,7 @@ pub fn doTyped(self: Directive, T: type, ctx: anytype, out: anytype) anyerror!vo
                             try std.fmt.formatInt(@field(ctx, field.name), 10, .lower, .{}, out);
                         }
                     },
-                    else => comptime unreachable,
+                    else => unreachable,
                 }
             }
         },
@@ -352,7 +354,11 @@ pub fn doTyped(self: Directive, T: type, ctx: anytype, out: anytype) anyerror!vo
             //std.debug.assert(int.bits == 64);
             try std.fmt.formatInt(ctx, 10, .lower, .{}, out);
         },
-        else => comptime unreachable,
+        else => |ERR| {
+            //@compileLog(ERR);
+            _ = ERR;
+            unreachable;
+        },
     }
 }
 

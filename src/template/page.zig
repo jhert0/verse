@@ -11,8 +11,12 @@ const Offset = struct {
     start: usize,
     end: usize,
     kind: union(enum) {
-        directive: Directive,
         slice: void,
+        directive: Directive,
+        array: struct {
+            name: []const u8,
+            len: usize,
+        },
     },
 };
 
@@ -127,19 +131,56 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                     .end = index + end,
                     .kind = .{ .directive = drct },
                 };
-                if (drct.verb == .variable) {
-                    // TODO FIXME There is a really nasty bug here, where after
-                    // the first recurse, it will calculate the offsets based on
-                    // the root type, and not for the child type.
-                    os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
+                switch (drct.verb) {
+                    .variable => {
+                        // TODO FIXME There is a really nasty bug here, where after
+                        // the first recurse, it will calculate the offsets based on
+                        // the root type, and not for the child type.
+                        os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
+                        found_offsets = found_offsets ++ [_]Offset{os};
+                    },
+                    .split => {
+                        // TODO Split needs whitespace postfix
+                        found_offsets = found_offsets ++
+                            [_]Offset{
+                            .{
+                                .start = index + drct.tag_block.len,
+                                .end = index + end,
+                                .kind = .{
+                                    .array = .{
+                                        .name = drct.noun,
+                                        .len = 1,
+                                        //.extra = body_start,
+                                    },
+                                },
+                            },
+                            os,
+                        };
+                    },
+                    else => {
+                        // left in for testing
+                        if (drct.tag_block_body) |body| {
+                            const loop = validateBlock(
+                                body,
+                                getChildType(PageDataType, drct.noun),
+                            );
+                            found_offsets = found_offsets ++
+                                [_]Offset{.{
+                                .start = index + drct.tag_block_skip.?,
+                                .end = index + end,
+                                .kind = .{
+                                    .array = .{
+                                        .name = drct.noun,
+                                        .len = loop.len,
+                                        //.extra = body_start,
+                                    },
+                                },
+                            }} ++ loop;
+                        } else {
+                            found_offsets = found_offsets ++ [_]Offset{os};
+                        }
+                    },
                 }
-
-                // left in for testing
-                if (drct.tag_block_body) |body| {
-                    _ = validateBlock(body, getChildType(PageDataType, drct.noun));
-                }
-
-                found_offsets = found_offsets ++ [_]Offset{os};
                 pblob = pblob[end..];
                 index += end;
                 open_idx = index;
@@ -154,10 +195,10 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
             }
         } else break;
     }
-    if (index != pblob.len) {
+    if (index != pblob.len or open_idx == 0) {
         found_offsets = found_offsets ++ [_]Offset{.{
             .start = open_idx,
-            .end = open_idx + pblob.len,
+            .end = html.len,
             .kind = .slice,
         }};
     }
@@ -180,65 +221,158 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return .{ .data = d };
         }
 
+        fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
+            std.debug.assert(directive.verb == .variable);
+            if (directive.known_offset) |offset| {
+                if (directive.known_type) |_| {
+                    directive.formatTyped(T, data, out) catch unreachable;
+                    return;
+                }
+
+                const ptr: [*]const u8 = @ptrCast(&data);
+                var vari: ?[]const u8 = null;
+                switch (directive.otherwise) {
+                    .required => vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[offset]))).*,
+                    .delete => vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[offset]))).*,
+                    .default => |default| {
+                        const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                        vari = if (sptr.*) |sp| sp else default;
+                    },
+                    else => unreachable,
+                }
+                if (vari) |v| {
+                    try out.writeAll(v);
+                }
+            } else {
+                try directive.formatTyped(T, data, out);
+            }
+        }
+
+        fn offsetArrayItem(T: type, list: []const T, ofs: []const Offset, html: []const u8, out: anytype) !void {
+            //std.debug.print("item {any}\n", .{T});
+            if (T == []const u8) {
+                for (list) |item| try out.writeAll(item);
+            }
+
+            for (list) |item| {
+                try formatDirective(T, item, ofs, html, out);
+            }
+        }
+
+        fn offsetOptionalItem(T: type, item: ?T, ofs: []const Offset, html: []const u8, out: anytype) !void {
+            if (comptime T == ?[]const u8) {
+                return offsetDirective(T, item.?, ofs[0], out);
+            }
+            switch (@typeInfo(T)) {
+                .Int => {
+                    std.debug.print("skipped int\n", .{});
+                },
+                else => {
+                    if (item) |itm| {
+                        try formatDirective(T, itm, ofs, html, out);
+                    }
+                },
+            }
+        }
+
+        fn offsetArray(T: type, data: T, name: []const u8, ofs: []const Offset, html: []const u8, out: anytype) !void {
+            inline for (std.meta.fields(T)) |field| {
+                if (eql(u8, name, field.name)) {
+                    //std.debug.print("array found {s}\n", .{name});
+                    return switch (field.type) {
+                        []const u8 => try out.writeAll(@field(data, field.name)),
+                        []const []const u8 => try offsetArrayItem([]const u8, @field(data, field.name), ofs, html, out),
+                        else => {
+                            //std.debug.print("array found {}\n", .{@typeInfo(field.type)});
+                            switch (@typeInfo(field.type)) {
+                                .Pointer => |ptr| {
+                                    std.debug.assert(ptr.size == .Slice);
+                                    try offsetArrayItem(ptr.child, @field(data, field.name), ofs, html, out);
+                                },
+                                .Optional => |opt| {
+                                    if (opt.child == []const u8) {
+                                        return;
+                                        //return offsetDirective(field.type, @field(data, field.name), ofs[0].kind.directive, out);
+                                    }
+
+                                    try offsetOptionalItem(opt.child, @field(data, field.name), ofs, html, out);
+                                },
+                                else => {
+                                    std.debug.print("unexpected type {any}\n", .{field.type});
+                                    //unreachable;
+                                },
+                            }
+                        },
+                    };
+                }
+            } else {
+                std.debug.print("error generating page, field {s} is missing\n", .{name});
+            }
+        }
+
+        fn formatDirective(T: type, data: T, ofs: []const Offset, html: []const u8, out: anytype) !void {
+            var last_end: usize = 0;
+            var idx: usize = 0;
+            while (idx < ofs.len) {
+                const os = ofs[idx];
+                idx += 1;
+                switch (os.kind) {
+                    .array => |array| {
+                        //std.debug.print("array for {s}\n", .{array.name});
+                        var local: [0xff]u8 = undefined;
+                        const name = local[0..makeFieldName(array.name, &local)];
+                        if (T == []const []const u8) {
+                            try offsetArrayItem([]const u8, data, ofs[idx .. idx + 1], html, out);
+                        } else if (T == []const u8) {
+                            // skip
+                        } else {
+                            try offsetArray(T, data, name, ofs[idx..][0..array.len], html[os.start..os.end], out);
+                        }
+                        idx += array.len;
+                    },
+                    .slice => {
+                        if (idx == 1) {
+                            try out.writeAll(std.mem.trimLeft(u8, html[os.start..os.end], " \n\r"));
+                        } else if (idx == ofs.len) {
+                            //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
+                            try out.writeAll(html[os.start..os.end]);
+                        } else if (ofs.len == 1) {
+                            try out.writeAll(std.mem.trim(u8, html[os.start..os.end], " \n\r"));
+                        } else {
+                            try out.writeAll(html[os.start..os.end]);
+                        }
+                    },
+                    .directive => |directive| switch (directive.verb) {
+                        .variable => {
+                            //std.debug.print("directive\n", .{});
+                            offsetDirective(T, data, directive, out) catch |err| switch (err) {
+                                error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
+                                error.VariableMissing => {
+                                    if (!is_test) log.err(
+                                        "Template Error, variable missing {{{s}}}",
+                                        .{html[os.start..os.end]},
+                                    );
+                                    try out.writeAll(html[os.start..os.end]);
+                                },
+                                else => return err,
+                            };
+                        },
+                        else => {
+                            //std.debug.print("directive skipped {}\n", .{directive.verb});
+                        },
+                    },
+                }
+                last_end = os.end;
+            }
+        }
+
         pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
             //std.debug.print("offs {any}\n", .{Self.DataOffsets});
             const blob = Self.PageTemplate.blob;
             if (Self.DataOffsets.len == 0)
                 return try out.writeAll(blob);
 
-            var last_end: usize = 0;
-            for (Self.DataOffsets) |os| {
-                switch (os.kind) {
-                    .slice => try out.writeAll(blob[os.start..os.end]),
-                    .directive => |directive| {
-                        switch (directive.verb) {
-                            .variable => {
-                                if (directive.known_offset) |offset| {
-                                    if (directive.known_type) |_| {
-                                        directive.formatTyped(PageDataType, self.data, out) catch unreachable;
-                                        continue;
-                                    }
-
-                                    const ptr: [*]const u8 = @ptrCast(&self.data);
-                                    var vari: ?[]const u8 = null;
-                                    switch (directive.otherwise) {
-                                        .required => {
-                                            vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[offset]))).*;
-                                        },
-                                        .delete => {
-                                            vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[offset]))).*;
-                                        },
-                                        .default => |default| {
-                                            const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
-                                            vari = if (sptr.*) |sp| sp else default;
-                                        },
-                                        else => unreachable,
-                                    }
-                                    if (vari) |v| {
-                                        try out.writeAll(v);
-                                    }
-                                }
-                            },
-                            else => {
-                                directive.formatTyped(PageDataType, self.data, out) catch |err| switch (err) {
-                                    error.IgnoreDirective => try out.writeAll(blob[os.start..os.end]),
-                                    error.VariableMissing => {
-                                        if (!is_test) log.err(
-                                            "Template Error, variable missing {{{s}}}",
-                                            .{blob[os.start..os.end]},
-                                        );
-                                        try out.writeAll(blob[os.start..os.end]);
-                                    },
-                                    else => return err,
-                                };
-                            },
-                        }
-                    },
-                }
-                last_end = os.end;
-            } else {
-                return try out.writeAll(blob[last_end..]);
-            }
+            try formatDirective(PageDataType, self.data, Self.DataOffsets[0..], blob, out);
         }
     };
 }
