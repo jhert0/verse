@@ -105,8 +105,47 @@ pub fn commentTag(blob: []const u8) ?usize {
     return null;
 }
 
+fn validateBlockSplit(
+    index: usize,
+    offset: usize,
+    end: usize,
+    pblob: []const u8,
+    drct: Directive,
+    os: Offset,
+) []const Offset {
+    // TODO Split needs whitespace postfix
+    const ws_start: usize = offset + end;
+    var wsidx = ws_start;
+    while (wsidx < pblob.len and
+        (pblob[wsidx] == ' ' or pblob[wsidx] == '\t' or
+        pblob[wsidx] == '\n' or pblob[wsidx] == '\r'))
+    {
+        wsidx += 1;
+    }
+    if (wsidx > 0) {
+        return &[_]Offset{
+            .{
+                .start = index + drct.tag_block.len,
+                .end = index + wsidx,
+                .kind = .{ .array = .{ .name = drct.noun, .len = 2 } },
+            },
+            os,
+            .{ .start = 0, .end = wsidx - end, .kind = .slice },
+        };
+    } else {
+        return &[_]Offset{
+            .{
+                .start = index + drct.tag_block.len,
+                .end = index + end,
+                .kind = .{ .array = .{ .name = drct.noun, .len = 1 } },
+            },
+            os,
+        };
+    }
+}
+
 pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offset {
-    @setEvalBranchQuota(10000);
+    @setEvalBranchQuota(20000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = html;
     var index: usize = 0;
@@ -141,35 +180,8 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                         found_offsets = found_offsets ++ [_]Offset{os};
                     },
                     .split => {
-                        // TODO Split needs whitespace postfix
-                        const ws_start: usize = offset + end;
-                        var wsidx = ws_start;
-                        while (wsidx < pblob.len and
-                            (pblob[wsidx] == ' ' or pblob[wsidx] == '\t' or
-                            pblob[wsidx] == '\n' or pblob[wsidx] == '\r'))
-                        {
-                            wsidx += 1;
-                        }
-                        if (wsidx > 0) {
-                            found_offsets = found_offsets ++ [_]Offset{
-                                .{
-                                    .start = index + drct.tag_block.len,
-                                    .end = index + wsidx,
-                                    .kind = .{ .array = .{ .name = drct.noun, .len = 2 } },
-                                },
-                                os,
-                                .{ .start = 0, .end = wsidx - end, .kind = .slice },
-                            };
-                        } else {
-                            found_offsets = found_offsets ++ [_]Offset{
-                                .{
-                                    .start = index + drct.tag_block.len,
-                                    .end = index + end,
-                                    .kind = .{ .array = .{ .name = drct.noun, .len = 1 } },
-                                },
-                                os,
-                            };
-                        }
+                        found_offsets = found_offsets ++
+                            validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
                     },
                     else => {
                         // left in for testing

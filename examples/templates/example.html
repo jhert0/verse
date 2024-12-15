@@ -54,10 +54,18 @@
         <p>Namespaced Variable : <SimpleVariable /></p>
       </With>
 
+      <!-- Possibly the most common logic directive. For will take a slice -->
+      <!-- of a Struct, and follows the previous rules of With and variables. -->
+      <For BasicLoop>
+        <p style="color:<Color>"><Text /></p>
+      </For>
+      <!-- If you have a simple list, that doesn't require any namespace -->
+      <!-- features (or the corresponding type checking) Split will take -->
+      <!-- a slice of []const u8, from a simple named variable -->
+      <p><Split Slices /></p>
+
       <!-- TODO Write and Document-->
       <!--
-        < For Loop></For>
-        < Split Slices></For>
         < Build TemplateVars _template_name.html />
       -->
     </content>

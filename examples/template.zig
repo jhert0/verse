@@ -55,6 +55,19 @@ fn index(verse: *Verse) Router.Error!void {
         .namespaced_with = .{
             .simple_variable = "This is a different variable from above",
         },
+
+        .basic_loop = &.{
+            .{ .color = "red", .text = "This color is red" },
+            .{ .color = "blue", .text = "This color is blue" },
+            .{ .color = "green", .text = "This color is green" },
+        },
+
+        .slices = &.{
+            "This is simple ",
+            "but very useful ",
+            "for many types of ",
+            "data generation patterns ",
+        },
     });
 
     try verse.sendPage(&page);
