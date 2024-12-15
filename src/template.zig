@@ -783,16 +783,22 @@ test "directive typed ?usize" {
     const blob = "<Number type=\"?usize\" />";
     const expected: []const u8 = "420";
 
-    const FE = struct { number: ?usize };
+    const MaybeUsize = struct { number: ?usize };
 
     const t = Template{ .name = "test", .blob = blob };
-    const page = Page(t, FE);
+    const page = Page(t, MaybeUsize);
 
-    const slice = FE{ .number = 420 };
+    const slice = MaybeUsize{ .number = 420 };
     const pg = page.init(slice);
     const p = try allocPrint(a, "{}", .{pg});
     defer a.free(p);
     try std.testing.expectEqualStrings(expected, p);
+
+    const pg2 = page.init(MaybeUsize{ .number = null });
+    const p2 = try allocPrint(a, "{}", .{pg2});
+    defer a.free(p2);
+    const expected2: []const u8 = "";
+    try std.testing.expectEqualStrings(expected2, p2);
 }
 
 test "directive typed ?usize null" {
