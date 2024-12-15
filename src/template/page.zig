@@ -14,6 +14,11 @@ const Offset = struct {
     kind: union(enum) {
         slice: void,
         directive: Directive,
+        template: struct {
+            name: []const u8,
+            html: []const u8,
+            len: usize,
+        },
         array: struct {
             name: []const u8,
             len: usize,
@@ -189,7 +194,7 @@ fn validateBlockSplit(
     }
 }
 
-pub fn validateBlock(comptime html: []const u8, PageDataType: type, base_offset: usize) []const Offset {
+pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: usize) []const Offset {
     @setEvalBranchQuota(20000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = html;
@@ -210,7 +215,7 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type, base_offset:
                     .kind = .slice,
                 }};
 
-                const known_offset = getOffset(PageDataType, drct.noun, base_offset);
+                const known_offset = getOffset(BlockType, drct.noun, base_offset);
                 const end = drct.tag_block.len;
                 switch (drct.verb) {
                     .variable => {
@@ -232,7 +237,7 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type, base_offset:
                         found_offsets = found_offsets ++
                             validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
                     },
-                    .foreach, .with, .build => {
+                    .foreach, .with => {
                         const os = Offset{
                             .start = index,
                             .end = index + end,
@@ -246,17 +251,34 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type, base_offset:
                             // better to calculate the offset from root.
                             const loop = validateBlock(
                                 body,
-                                getChildType(PageDataType, drct.noun),
+                                getChildType(BlockType, drct.noun),
                                 0,
                             );
                             found_offsets = found_offsets ++ [_]Offset{.{
                                 .start = index + drct.tag_block_skip.?,
                                 .end = index + end,
-                                .kind = .{ .array = .{ .name = drct.noun, .len = loop.len } },
+                                .kind = .{
+                                    .array = .{ .name = drct.noun, .len = loop.len },
+                                },
                             }} ++ loop;
                         } else {
                             found_offsets = found_offsets ++ [_]Offset{os};
                         }
+                    },
+                    .build => {
+                        const child = getChildType(BlockType, drct.noun);
+                        const loop = validateBlock(drct.otherwise.template.blob, child, 0);
+                        found_offsets = found_offsets ++ [_]Offset{.{
+                            .start = index,
+                            .end = index + end,
+                            .kind = .{
+                                .template = .{
+                                    .name = drct.noun,
+                                    .html = drct.otherwise.template.blob,
+                                    .len = loop.len,
+                                },
+                            },
+                        }} ++ loop;
                     },
                 }
                 pblob = pblob[end..];
@@ -353,11 +375,12 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                 .Int => {
                     std.debug.print("skipped int\n", .{});
                 },
-                else => {
+                .Struct => {
                     if (item) |itm| {
                         try formatDirective(T, itm, ofs, html, out);
                     }
                 },
+                else => unreachable,
             }
         }
 
@@ -396,6 +419,16 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
+        fn offsetBuild(Parent: type, data: Parent, name: []const u8, ofs: []const Offset, html: []const u8, out: anytype) !void {
+            if (Parent == []const u8) comptime unreachable;
+            inline for (std.meta.fields(Parent)) |field| {
+                if (@typeInfo(field.type) != .Struct) continue;
+                if (eql(u8, name, field.name)) {
+                    return try formatDirective(field.type, @field(data, field.name), ofs, html, out);
+                }
+            } else unreachable;
+        }
+
         fn formatDirective(T: type, data: T, ofs: []const Offset, html: []const u8, out: anytype) !void {
             var last_end: usize = 0;
             var idx: usize = 0;
@@ -415,6 +448,12 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                             try offsetArray(T, data, name, ofs[idx..][0..array.len], html[os.start..os.end], out);
                         }
                         idx += array.len;
+                    },
+                    .template => |tmpl| {
+                        var local: [0xff]u8 = undefined;
+                        const name = local[0..makeFieldName(tmpl.name, &local)];
+                        try offsetBuild(T, data, name, ofs[idx..][0..tmpl.len], tmpl.html, out);
+                        idx += tmpl.len;
                     },
                     .slice => {
                         if (idx == 1) {
@@ -444,7 +483,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                             };
                         },
                         else => {
-                            //std.debug.print("directive skipped {}\n", .{directive.verb});
+                            std.debug.print("directive skipped {} {}\n", .{ directive.verb, ofs.len });
                         },
                     },
                 }

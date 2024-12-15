@@ -12,7 +12,7 @@ pub const Otherwise = union(enum) {
     required: void,
     delete: void,
     default: []const u8,
-    template: *const Template.Template,
+    template: Template.Template,
     //page: type,
 };
 
@@ -142,7 +142,6 @@ pub fn initVerb(verb: []const u8, noun: []const u8, blob: []const u8) ?Directive
                 .otherwise = .{ .template = bi },
                 .tag_block = blob[0 .. verb.len + 2 + noun.len],
             };
-            @compileError("unreachable: Unable to Build template name " ++ b_html ++ " (not found)");
         } else {
             if (getBuiltin(b_html)) |bi| {
                 return Directive{
@@ -375,7 +374,7 @@ pub fn forEachTyped(self: Directive, T: type, data: T, out: anytype) anyerror!vo
 pub fn withTyped(self: Directive, T: type, block: T, out: anytype) anyerror!void {
     var p = PageRuntime(T){
         .data = block,
-        .template = if (self.otherwise == .template) self.otherwise.template.* else .{
+        .template = if (self.otherwise == .template) self.otherwise.template else .{
             .name = self.noun,
             .blob = trim(u8, self.tag_block_body.?, whitespace),
         },
@@ -383,19 +382,22 @@ pub fn withTyped(self: Directive, T: type, block: T, out: anytype) anyerror!void
     try p.format("", .{}, out);
 }
 
-fn getDynamic(name: []const u8) ?*const Template.Template {
+fn getDynamic(name: []const u8) ?Template.Template {
     for (0..dynamic.*.len) |i| {
         if (eql(u8, dynamic.*[i].name, name)) {
-            return &dynamic.*[i];
+            return dynamic.*[i];
         }
     }
     return null;
 }
 
-fn getBuiltin(name: []const u8) ?*const Template.Template {
+fn getBuiltin(name: []const u8) ?Template.Template {
+    if (@inComptime()) {
+        return Template.findTemplate(name);
+    }
     for (0..builtin.len) |i| {
         if (eql(u8, builtin[i].name, name)) {
-            return &builtin[i];
+            return builtin[i];
         }
     }
     return null;
