@@ -5,7 +5,6 @@ tag_block: []const u8,
 tag_block_body: ?[]const u8 = null,
 tag_block_skip: ?usize = null,
 known_type: ?KnownType = null,
-known_offset: ?usize = null,
 
 pub const Directive = @This();
 

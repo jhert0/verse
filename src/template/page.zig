@@ -10,6 +10,7 @@ const Kind = enum {
 const Offset = struct {
     start: usize,
     end: usize,
+    known_offset: ?usize = null,
     kind: union(enum) {
         slice: void,
         directive: Directive,
@@ -69,15 +70,59 @@ pub fn PageRuntime(comptime PageDataType: type) type {
     };
 }
 
-fn getOffset(T: type, name: []const u8) ?usize {
+fn getOffset(T: type, name: []const u8, base: usize) ?usize {
     switch (@typeInfo(T)) {
         .Struct => {
             var local: [0xff]u8 = undefined;
-            const field = local[0..makeFieldName(name, &local)];
-            return @offsetOf(T, field);
+            const end = makeFieldName(name, &local);
+            const field = local[0..end];
+            return @offsetOf(T, field) + base;
         },
         else => return null,
     }
+}
+
+test getOffset {
+    const SUT1 = struct {
+        a: usize,
+        b: u8,
+        value: []const u8,
+    };
+    const test_1 = comptime getOffset(SUT1, "value", 0);
+    const test_2 = comptime getOffset(SUT1, "Value", 0);
+
+    try std.testing.expectEqual(8, test_1);
+    try std.testing.expectEqual(8, test_2);
+    // Yes, by definition, if the previous two are true, the 3rd must be, but
+    // it's actually testing specific behavior.
+    try std.testing.expectEqual(test_1, test_2);
+
+    const SUT2 = struct {
+        a: usize,
+        b: u16,
+        parent: SUT1,
+    };
+    const test_4 = comptime getOffset(SUT2, "parent", 0);
+    try std.testing.expectEqual(8, test_4);
+
+    const test_5 = comptime getOffset(SUT1, "value", test_4.?);
+    try std.testing.expectEqual(16, test_5);
+
+    const vut = SUT2{
+        .a = 12,
+        .b = 98,
+        .parent = .{
+            .a = 21,
+            .b = 89,
+            .value = "clever girl",
+        },
+    };
+
+    // Force into runtime
+    var vari: *const []const u8 = undefined;
+    const ptr: [*]const u8 = @ptrCast(&vut);
+    vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[test_5.?])));
+    try std.testing.expectEqualStrings("clever girl", vari.*);
 }
 
 fn getChildType(T: type, name: []const u8) type {
@@ -144,7 +189,7 @@ fn validateBlockSplit(
     }
 }
 
-pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offset {
+pub fn validateBlock(comptime html: []const u8, PageDataType: type, base_offset: usize) []const Offset {
     @setEvalBranchQuota(20000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = html;
@@ -165,30 +210,44 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
                     .kind = .slice,
                 }};
 
+                const known_offset = getOffset(PageDataType, drct.noun, base_offset);
                 const end = drct.tag_block.len;
-                var os = Offset{
-                    .start = index,
-                    .end = index + end,
-                    .kind = .{ .directive = drct },
-                };
                 switch (drct.verb) {
                     .variable => {
-                        // TODO FIXME There is a really nasty bug here, where after
-                        // the first recurse, it will calculate the offsets based on
-                        // the root type, and not for the child type.
-                        os.kind.directive.known_offset = getOffset(PageDataType, drct.noun);
+                        const os = Offset{
+                            .start = index,
+                            .end = index + end,
+                            .known_offset = known_offset,
+                            .kind = .{ .directive = drct },
+                        };
                         found_offsets = found_offsets ++ [_]Offset{os};
                     },
                     .split => {
+                        const os = Offset{
+                            .start = index,
+                            .end = index + end,
+                            .known_offset = known_offset,
+                            .kind = .{ .directive = drct },
+                        };
                         found_offsets = found_offsets ++
                             validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
                     },
-                    else => {
+                    .foreach, .with, .build => {
+                        const os = Offset{
+                            .start = index,
+                            .end = index + end,
+                            .known_offset = known_offset,
+                            .kind = .{ .directive = drct },
+                        };
                         // left in for testing
                         if (drct.tag_block_body) |body| {
+                            // The code as written descends into the type.
+                            // if the call stack flattens out, it might be
+                            // better to calculate the offset from root.
                             const loop = validateBlock(
                                 body,
                                 getChildType(PageDataType, drct.noun),
+                                0,
                             );
                             found_offsets = found_offsets ++ [_]Offset{.{
                                 .start = index + drct.tag_block_skip.?,
@@ -225,7 +284,7 @@ pub fn validateBlock(comptime html: []const u8, PageDataType: type) []const Offs
 }
 
 pub fn Page(comptime template: Template, comptime PageDataType: type) type {
-    const offsets = validateBlock(template.blob, PageDataType);
+    const offsets = validateBlock(template.blob, PageDataType, 0);
     const offset_len = offsets.len;
 
     return struct {
@@ -240,21 +299,21 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return .{ .data = d };
         }
 
-        fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
-            std.debug.assert(directive.verb == .variable);
-            if (directive.known_offset) |offset| {
-                if (directive.known_type) |_| {
-                    directive.formatTyped(T, data, out) catch unreachable;
+        fn offsetDirective(T: type, data: T, offset: Offset, out: anytype) !void {
+            std.debug.assert(offset.kind.directive.verb == .variable);
+            if (offset.known_offset) |ptr_offset| {
+                if (offset.kind.directive.known_type) |_| {
+                    offset.kind.directive.formatTyped(T, data, out) catch unreachable;
                     return;
                 }
 
                 const ptr: [*]const u8 = @ptrCast(&data);
                 var vari: ?[]const u8 = null;
-                switch (directive.otherwise) {
-                    .required => vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[offset]))).*,
-                    .delete => vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[offset]))).*,
+                switch (offset.kind.directive.otherwise) {
+                    .required => vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[ptr_offset]))).*,
+                    .delete => vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[ptr_offset]))).*,
                     .default => |default| {
-                        const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[offset]));
+                        const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[ptr_offset]));
                         vari = if (sptr.*) |sp| sp else default;
                     },
                     else => unreachable,
@@ -263,7 +322,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     try out.writeAll(v);
                 }
             } else {
-                try directive.formatTyped(T, data, out);
+                try offset.kind.directive.formatTyped(T, data, out);
             }
         }
 
@@ -372,7 +431,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     .directive => |directive| switch (directive.verb) {
                         .variable => {
                             //std.debug.print("directive\n", .{});
-                            offsetDirective(T, data, directive, out) catch |err| switch (err) {
+                            offsetDirective(T, data, os, out) catch |err| switch (err) {
                                 error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
                                 error.VariableMissing => {
                                     if (!is_test) log.err(
