@@ -68,6 +68,13 @@ fn index(verse: *Verse) Router.Error!void {
             "for many types of ",
             "data generation patterns ",
         },
+
+        .include_vars = .{
+            .template_name = "<h1>This is the included html</h1>",
+            .simple_variable = "This is the simple variable for the included html",
+        },
+        // Even if the included html has no variables, the field is still required here
+        .empty_vars = .{},
     });
 
     try verse.sendPage(&page);

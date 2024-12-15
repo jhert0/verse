@@ -64,10 +64,15 @@
       <!-- a slice of []const u8, from a simple named variable -->
       <p><Split Slices /></p>
 
-      <!-- TODO Write and Document-->
-      <!--
-        < Build TemplateVars _template_name.html />
-      -->
+
+      <!-- If you have a sub template that needs to be built, you can call -->
+      <!-- Build NameOfNamespaceStruct template/name.html -->
+      <Build IncludeVars templates/_include_name.html />
+      <!-- The syntax is the same even if there are no variables in the included -->
+      <!-- template. -->
+      <Build EmptyVars templates/_include_empty.html />
+      <!-- n.b. some of this behavior is subject to change. -->
+      <!-- TODO add and document _template_name.html syntax (or remove syntax) -->
     </content>
   </body>
 </html>
