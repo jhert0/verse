@@ -194,8 +194,84 @@ fn validateBlockSplit(
     }
 }
 
+fn validateDirective(
+    BlockType: type,
+    index: usize,
+    offset: usize,
+    drct: Directive,
+    pblob: []const u8,
+    base_offset: usize,
+) []const Offset {
+    @setEvalBranchQuota(15000);
+    const known_offset = getOffset(BlockType, drct.noun, base_offset);
+    const end = drct.tag_block.len;
+    switch (drct.verb) {
+        .variable => {
+            const os = Offset{
+                .start = index,
+                .end = index + end,
+                .known_offset = known_offset,
+                .kind = .{ .directive = drct },
+            };
+            return &[_]Offset{os};
+        },
+        .split => {
+            const os = Offset{
+                .start = index,
+                .end = index + end,
+                .known_offset = known_offset,
+                .kind = .{ .directive = drct },
+            };
+            return validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
+        },
+        .foreach, .with => {
+            const os = Offset{
+                .start = index,
+                .end = index + end,
+                .known_offset = known_offset,
+                .kind = .{ .directive = drct },
+            };
+            // left in for testing
+            if (drct.tag_block_body) |body| {
+                // The code as written descends into the type.
+                // if the call stack flattens out, it might be
+                // better to calculate the offset from root.
+                const loop = validateBlock(
+                    body,
+                    getChildType(BlockType, drct.noun),
+                    0,
+                );
+                return &[_]Offset{.{
+                    .start = index + drct.tag_block_skip.?,
+                    .end = index + end,
+                    .kind = .{
+                        .array = .{ .name = drct.noun, .len = loop.len },
+                    },
+                }} ++ loop;
+            } else {
+                return &[_]Offset{os};
+            }
+        },
+        .build => {
+            const child = getChildType(BlockType, drct.noun);
+            const loop = validateBlock(drct.otherwise.template.blob, child, 0);
+            return &[_]Offset{.{
+                .start = index,
+                .end = index + end,
+                .kind = .{
+                    .template = .{
+                        .name = drct.noun,
+                        .html = drct.otherwise.template.blob,
+                        .len = loop.len,
+                    },
+                },
+            }} ++ loop;
+        },
+    }
+}
+
 pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: usize) []const Offset {
-    @setEvalBranchQuota(20000);
+    @setEvalBranchQuota(10000);
     var found_offsets: []const Offset = &[0]Offset{};
     var pblob = html;
     var index: usize = 0;
@@ -209,78 +285,20 @@ pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: us
             pblob = pblob[offset..];
             index += offset;
             if (Directive.init(pblob)) |drct| {
-                found_offsets = found_offsets ++ [_]Offset{.{
+                found_offsets = found_offsets ++
+                    [_]Offset{.{
                     .start = open_idx,
                     .end = index,
                     .kind = .slice,
-                }};
-
-                const known_offset = getOffset(BlockType, drct.noun, base_offset);
+                }} ++ validateDirective(
+                    BlockType,
+                    index,
+                    offset,
+                    drct,
+                    pblob,
+                    base_offset,
+                );
                 const end = drct.tag_block.len;
-                switch (drct.verb) {
-                    .variable => {
-                        const os = Offset{
-                            .start = index,
-                            .end = index + end,
-                            .known_offset = known_offset,
-                            .kind = .{ .directive = drct },
-                        };
-                        found_offsets = found_offsets ++ [_]Offset{os};
-                    },
-                    .split => {
-                        const os = Offset{
-                            .start = index,
-                            .end = index + end,
-                            .known_offset = known_offset,
-                            .kind = .{ .directive = drct },
-                        };
-                        found_offsets = found_offsets ++
-                            validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
-                    },
-                    .foreach, .with => {
-                        const os = Offset{
-                            .start = index,
-                            .end = index + end,
-                            .known_offset = known_offset,
-                            .kind = .{ .directive = drct },
-                        };
-                        // left in for testing
-                        if (drct.tag_block_body) |body| {
-                            // The code as written descends into the type.
-                            // if the call stack flattens out, it might be
-                            // better to calculate the offset from root.
-                            const loop = validateBlock(
-                                body,
-                                getChildType(BlockType, drct.noun),
-                                0,
-                            );
-                            found_offsets = found_offsets ++ [_]Offset{.{
-                                .start = index + drct.tag_block_skip.?,
-                                .end = index + end,
-                                .kind = .{
-                                    .array = .{ .name = drct.noun, .len = loop.len },
-                                },
-                            }} ++ loop;
-                        } else {
-                            found_offsets = found_offsets ++ [_]Offset{os};
-                        }
-                    },
-                    .build => {
-                        const child = getChildType(BlockType, drct.noun);
-                        const loop = validateBlock(drct.otherwise.template.blob, child, 0);
-                        found_offsets = found_offsets ++ [_]Offset{.{
-                            .start = index,
-                            .end = index + end,
-                            .kind = .{
-                                .template = .{
-                                    .name = drct.noun,
-                                    .html = drct.otherwise.template.blob,
-                                    .len = loop.len,
-                                },
-                            },
-                        }} ++ loop;
-                    },
-                }
                 pblob = pblob[end..];
                 index += end;
                 open_idx = index;
