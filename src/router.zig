@@ -144,6 +144,13 @@ pub fn POST(comptime name: []const u8, comptime match: BuildFn) Match {
     return mr;
 }
 
+/// Match build helper for DELETE requests.
+pub fn DELETE(comptime name: []const u8, comptime match: BuildFn) Match {
+    var mr = ROUTE(name, match);
+    mr.methods = .{ .DELETE = true };
+    return mr;
+}
+
 /// Static file helper that will auto route to the provided directory.
 /// Verse normally expects to sit behind an rproxy, that can route requests for
 /// static resources without calling Verse. But Verse does have some support for
