@@ -13,19 +13,17 @@ const Offset = struct {
     kind: union(enum) {
         slice: []const u8,
         directive: struct {
-            name: []const u8,
             kind: type,
             data_offset: usize,
             d: Directive,
         },
         template: struct {
-            name: []const u8,
             html: []const u8,
+            kind: type,
             data_offset: usize,
             len: usize,
         },
         array: struct {
-            name: []const u8,
             kind: type,
             data_offset: usize,
             len: usize,
@@ -202,7 +200,6 @@ fn validateBlockSplit(
         .end = index + end,
         .kind = .{
             .directive = .{
-                .name = drct.noun,
                 .kind = []const u8,
                 .data_offset = data_offset,
                 .d = drct,
@@ -225,7 +222,6 @@ fn validateBlockSplit(
                 .end = index + wsidx,
                 .kind = .{
                     .array = .{
-                        .name = drct.noun,
                         .data_offset = data_offset,
                         .kind = []const []const u8,
                         .len = 2,
@@ -249,7 +245,6 @@ fn validateBlockSplit(
                 .data_offset = null,
                 .kind = .{
                     .array = .{
-                        .name = drct.noun,
                         .kind = []const []const u8,
                         .data_offset = data_offset,
                         .len = 1,
@@ -280,7 +275,6 @@ fn validateDirective(
                 .end = index + end,
                 .kind = .{
                     .directive = .{
-                        .name = drct.noun,
                         .kind = FieldT,
                         .data_offset = data_offset,
                         .d = drct,
@@ -301,7 +295,6 @@ fn validateDirective(
                 .end = index + end,
                 .kind = .{
                     .directive = .{
-                        .name = drct.noun,
                         .kind = FieldT,
                         .data_offset = data_offset,
                         .d = drct,
@@ -320,7 +313,6 @@ fn validateDirective(
                     .end = index + end,
                     .kind = .{
                         .array = .{
-                            .name = drct.noun,
                             .kind = FieldT,
                             .data_offset = data_offset,
                             .len = loop.len,
@@ -333,14 +325,15 @@ fn validateDirective(
         },
         .build => {
             const BaseT = baseType(BlockType, drct.noun);
+            const FieldT = fieldType(BlockType, drct.noun);
             const loop = validateBlock(drct.otherwise.template.blob, BaseT, 0);
             return &[_]Offset{.{
                 .start = index,
                 .end = index + end,
                 .kind = .{
                     .template = .{
-                        .name = drct.noun,
                         .html = drct.otherwise.template.blob,
+                        .kind = FieldT,
                         .data_offset = data_offset,
                         .len = loop.len,
                     },
@@ -512,16 +505,6 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             };
         }
 
-        fn offsetBuild(Parent: type, data: Parent, name: []const u8, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
-            if (Parent == []const u8) comptime unreachable;
-            inline for (std.meta.fields(Parent)) |field| {
-                if (@typeInfo(field.type) != .Struct) continue;
-                if (eql(u8, name, field.name)) {
-                    return try formatDirective(field.type, @field(data, field.name), ofs, html, out);
-                }
-            } else unreachable;
-        }
-
         fn formatDirective(T: type, data: T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
             var skip: usize = 0;
             inline for (ofs, 0..) |os, idx| {
@@ -550,26 +533,15 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                             .variable => {
                                 //std.debug.print("directive\n", .{});
                                 const child_data = os.getData(directive.kind, @ptrCast(&data));
-                                offsetDirective(directive.kind, child_data.*, directive.d, out) catch |err| switch (err) {
-                                    //error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
-                                    //error.VariableMissing => {
-                                    //    if (!is_test) log.err(
-                                    //        "Template Error, variable missing {{{s}}}",
-                                    //        .{html[os.start..os.end]},
-                                    //    );
-                                    //    try out.writeAll(html[os.start..os.end]);
-                                    //},
-                                    else => return err,
-                                };
+                                try offsetDirective(directive.kind, child_data.*, directive.d, out);
                             },
                             else => {
                                 std.debug.print("directive skipped {} {}\n", .{ directive.d.verb, ofs.len });
                             },
                         },
                         .template => |tmpl| {
-                            var local: [0xff]u8 = undefined;
-                            const name = local[0..makeFieldName(tmpl.name, &local)];
-                            try offsetBuild(T, data, name, ofs[idx + 1 ..][0..tmpl.len], tmpl.html, out);
+                            const child_data = os.getData(tmpl.kind, @ptrCast(&data));
+                            try formatDirective(tmpl.kind, child_data.*, ofs[idx + 1 ..][0..tmpl.len], tmpl.html, out);
                             skip = tmpl.len;
                         },
                     }
