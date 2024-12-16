@@ -10,7 +10,7 @@ const Kind = enum {
 const Offset = struct {
     start: usize,
     end: usize,
-    known_offset: ?usize = null,
+    data_offset: ?usize = null,
     kind: union(enum) {
         slice: []const u8,
         directive: Directive,
@@ -211,14 +211,14 @@ fn validateDirective(
     base_offset: usize,
 ) []const Offset {
     @setEvalBranchQuota(15000);
-    const known_offset = getOffset(BlockType, drct.noun, base_offset);
+    const data_offset = getOffset(BlockType, drct.noun, base_offset);
     const end = drct.tag_block.len;
     switch (drct.verb) {
         .variable => {
             const os = Offset{
                 .start = index,
                 .end = index + end,
-                .known_offset = known_offset,
+                .data_offset = data_offset,
                 .kind = .{ .directive = drct },
             };
             return &[_]Offset{os};
@@ -227,7 +227,7 @@ fn validateDirective(
             const os = Offset{
                 .start = index,
                 .end = index + end,
-                .known_offset = known_offset,
+                .data_offset = data_offset,
                 .kind = .{ .directive = drct },
             };
             return validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
@@ -236,7 +236,7 @@ fn validateDirective(
             const os = Offset{
                 .start = index,
                 .end = index + end,
-                .known_offset = known_offset,
+                .data_offset = data_offset,
                 .kind = .{ .directive = drct },
             };
             // left in for testing
@@ -349,7 +349,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
 
         fn offsetDirective(T: type, data: T, offset: Offset, out: anytype) !void {
             std.debug.assert(offset.kind.directive.verb == .variable);
-            if (offset.known_offset) |ptr_offset| {
+            if (offset.data_offset) |ptr_offset| {
                 if (offset.kind.directive.known_type) |_| {
                     offset.kind.directive.formatTyped(T, data, out) catch unreachable;
                     return;
