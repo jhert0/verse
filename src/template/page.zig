@@ -416,6 +416,42 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return .{ .data = d };
         }
 
+        fn vecCount(ofs: []const Offset) usize {
+            _ = ofs;
+        }
+
+        pub fn iovecCount(self: Self) usize {
+            var count: usize = 0;
+            var skip: usize = 0;
+            inline for (Self.DataOffsets) |dos| {
+                if (skip > 0) {
+                    skip -= 1;
+                } else switch (dos.kind) {
+                    .slice => count += 1,
+                    .directive => count += 1, // TODO actually less that 1
+                    .template => |t| {
+                        // TODO not implemented correctly
+                        count += t.len;
+                        skip = t.len;
+                    },
+                    .array => |array| {
+                        var size: usize = 0;
+                        switch (@typeInfo(array.kind)) {
+                            .Pointer => {
+                                const child_data = dos.getData(array.kind, @ptrCast(&self.data));
+                                size = child_data.len;
+                            },
+                            .Optional => {}, // TODO implement
+                            else => unreachable,
+                        }
+                        count += array.len * size;
+                        skip = array.len;
+                    },
+                }
+            }
+            return count;
+        }
+
         fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
             std.debug.assert(directive.verb == .variable);
             switch (T) {
