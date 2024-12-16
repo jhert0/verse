@@ -12,7 +12,7 @@ const Offset = struct {
     end: usize,
     known_offset: ?usize = null,
     kind: union(enum) {
-        slice: void,
+        slice: []const u8,
         directive: Directive,
         template: struct {
             name: []const u8,
@@ -177,17 +177,25 @@ fn validateBlockSplit(
             .{
                 .start = index + drct.tag_block.len,
                 .end = index + wsidx,
-                .kind = .{ .array = .{ .name = drct.noun, .len = 2 } },
+                .kind = .{
+                    .array = .{ .name = drct.noun, .len = 2 },
+                },
             },
             os,
-            .{ .start = 0, .end = wsidx - end, .kind = .slice },
+            .{
+                .start = 0,
+                .end = wsidx - end,
+                .kind = .{ .slice = pblob[0 .. wsidx - end] },
+            },
         };
     } else {
         return &[_]Offset{
             .{
                 .start = index + drct.tag_block.len,
                 .end = index + end,
-                .kind = .{ .array = .{ .name = drct.noun, .len = 1 } },
+                .kind = .{
+                    .array = .{ .name = drct.noun, .len = 1 },
+                },
             },
             os,
         };
@@ -289,7 +297,7 @@ pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: us
                     [_]Offset{.{
                     .start = open_idx,
                     .end = index,
-                    .kind = .slice,
+                    .kind = .{ .slice = html[open_idx..index] },
                 }} ++ validateDirective(
                     BlockType,
                     index,
@@ -317,7 +325,7 @@ pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: us
         found_offsets = found_offsets ++ [_]Offset{.{
             .start = open_idx,
             .end = html.len,
-            .kind = .slice,
+            .kind = .{ .slice = html[open_idx..] },
         }};
     }
     return found_offsets;
@@ -454,6 +462,18 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                 const os = ofs[idx];
                 idx += 1;
                 switch (os.kind) {
+                    .slice => |slice| {
+                        if (idx == 1) {
+                            try out.writeAll(std.mem.trimLeft(u8, slice, " \n\r"));
+                        } else if (idx == ofs.len) {
+                            //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
+                            try out.writeAll(slice);
+                        } else if (ofs.len == 1) {
+                            try out.writeAll(std.mem.trim(u8, slice, " \n\r"));
+                        } else {
+                            try out.writeAll(slice);
+                        }
+                    },
                     .array => |array| {
                         //std.debug.print("array for {s}\n", .{array.name});
                         var local: [0xff]u8 = undefined;
@@ -466,24 +486,6 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                             try offsetArray(T, data, name, ofs[idx..][0..array.len], html[os.start..os.end], out);
                         }
                         idx += array.len;
-                    },
-                    .template => |tmpl| {
-                        var local: [0xff]u8 = undefined;
-                        const name = local[0..makeFieldName(tmpl.name, &local)];
-                        try offsetBuild(T, data, name, ofs[idx..][0..tmpl.len], tmpl.html, out);
-                        idx += tmpl.len;
-                    },
-                    .slice => {
-                        if (idx == 1) {
-                            try out.writeAll(std.mem.trimLeft(u8, html[os.start..os.end], " \n\r"));
-                        } else if (idx == ofs.len) {
-                            //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
-                            try out.writeAll(html[os.start..os.end]);
-                        } else if (ofs.len == 1) {
-                            try out.writeAll(std.mem.trim(u8, html[os.start..os.end], " \n\r"));
-                        } else {
-                            try out.writeAll(html[os.start..os.end]);
-                        }
                     },
                     .directive => |directive| switch (directive.verb) {
                         .variable => {
@@ -503,6 +505,12 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                         else => {
                             std.debug.print("directive skipped {} {}\n", .{ directive.verb, ofs.len });
                         },
+                    },
+                    .template => |tmpl| {
+                        var local: [0xff]u8 = undefined;
+                        const name = local[0..makeFieldName(tmpl.name, &local)];
+                        try offsetBuild(T, data, name, ofs[idx..][0..tmpl.len], tmpl.html, out);
+                        idx += tmpl.len;
                     },
                 }
                 last_end = os.end;
