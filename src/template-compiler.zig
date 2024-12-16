@@ -293,8 +293,16 @@ pub fn makeStructName(in: []const u8) []const u8 {
 
 fn intToWord(in: u8) []const u8 {
     return switch (in) {
+        '0' => "Zero",
+        '1' => "One",
+        '2' => "Two",
+        '3' => "Three",
         '4' => "Four",
         '5' => "Five",
+        '6' => "Six",
+        '7' => "Seven",
+        '8' => "Eight",
+        '9' => "Nine",
         else => unreachable,
     };
 }
