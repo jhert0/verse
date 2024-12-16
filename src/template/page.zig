@@ -13,7 +13,11 @@ const Offset = struct {
     data_offset: ?usize = null,
     kind: union(enum) {
         slice: []const u8,
-        directive: Directive,
+        directive: struct {
+            name: []const u8,
+            d: Directive,
+            kind: type,
+        },
         template: struct {
             name: []const u8,
             html: []const u8,
@@ -24,6 +28,12 @@ const Offset = struct {
             len: usize,
         },
     },
+
+    pub fn getData(comptime o: Offset, T: type, ptr: [*]const u8) *const T {
+        if (o.data_offset) |ptr_offset| {
+            return @ptrCast(@alignCast(&ptr[ptr_offset]));
+        } else unreachable;
+    }
 };
 
 pub fn PageRuntime(comptime PageDataType: type) type {
@@ -136,11 +146,17 @@ fn getChildType(T: type, name: []const u8) type {
     //return @TypeOf(@FieldType(T, field)); // not in 0.13.0
     for (std.meta.fields(T)) |f| {
         if (eql(u8, f.name, field)) {
-            switch (@typeInfo(f.type)) {
-                .Pointer => |ptr| return ptr.child,
-                .Optional => |opt| return opt.child,
-                .Struct => return f.type,
-                else => unreachable,
+            switch (f.type) {
+                []const u8 => return f.type,
+                ?[]const u8 => return f.type,
+                ?usize => return f.type,
+                else => switch (@typeInfo(f.type)) {
+                    .Pointer => |ptr| return ptr.child,
+                    .Optional => |opt| return opt.child,
+                    .Struct => return f.type,
+                    .Int => return f.type,
+                    else => @compileError("Unexpected kind " ++ f.name),
+                },
             }
         }
     } else unreachable;
@@ -212,6 +228,7 @@ fn validateDirective(
 ) []const Offset {
     @setEvalBranchQuota(15000);
     const data_offset = getOffset(BlockType, drct.noun, base_offset);
+    const kind = getChildType(BlockType, drct.noun);
     const end = drct.tag_block.len;
     switch (drct.verb) {
         .variable => {
@@ -219,7 +236,13 @@ fn validateDirective(
                 .start = index,
                 .end = index + end,
                 .data_offset = data_offset,
-                .kind = .{ .directive = drct },
+                .kind = .{
+                    .directive = .{
+                        .name = drct.noun,
+                        .d = drct,
+                        .kind = kind,
+                    },
+                },
             };
             return &[_]Offset{os};
         },
@@ -228,7 +251,13 @@ fn validateDirective(
                 .start = index,
                 .end = index + end,
                 .data_offset = data_offset,
-                .kind = .{ .directive = drct },
+                .kind = .{
+                    .directive = .{
+                        .name = drct.noun,
+                        .d = drct,
+                        .kind = kind,
+                    },
+                },
             };
             return validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
         },
@@ -237,7 +266,13 @@ fn validateDirective(
                 .start = index,
                 .end = index + end,
                 .data_offset = data_offset,
-                .kind = .{ .directive = drct },
+                .kind = .{
+                    .directive = .{
+                        .name = drct.noun,
+                        .d = drct,
+                        .kind = kind,
+                    },
+                },
             };
             // left in for testing
             if (drct.tag_block_body) |body| {
@@ -347,30 +382,24 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return .{ .data = d };
         }
 
-        fn offsetDirective(T: type, data: T, offset: Offset, out: anytype) !void {
-            std.debug.assert(offset.kind.directive.verb == .variable);
-            if (offset.data_offset) |ptr_offset| {
-                if (offset.kind.directive.known_type) |_| {
-                    offset.kind.directive.formatTyped(T, data, out) catch unreachable;
-                    return;
-                }
-
-                const ptr: [*]const u8 = @ptrCast(&data);
-                var vari: ?[]const u8 = null;
-                switch (offset.kind.directive.otherwise) {
-                    .required => vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[ptr_offset]))).*,
-                    .delete => vari = @as(*const ?[]const u8, @ptrCast(@alignCast(&ptr[ptr_offset]))).*,
-                    .default => |default| {
-                        const sptr: *const ?[]const u8 = @ptrCast(@alignCast(&ptr[ptr_offset]));
-                        vari = if (sptr.*) |sp| sp else default;
-                    },
-                    else => unreachable,
-                }
-                if (vari) |v| {
-                    try out.writeAll(v);
-                }
-            } else {
-                try offset.kind.directive.formatTyped(T, data, out);
+        fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
+            std.debug.assert(directive.verb == .variable);
+            //@compileLog(T);
+            switch (T) {
+                []const u8 => try out.writeAll(data),
+                ?[]const u8 => if (data) |d| {
+                    try out.writeAll(d);
+                } else if (directive.otherwise == .default) {
+                    try out.writeAll(directive.otherwise.default);
+                },
+                ?usize => {
+                    if (data) |us| {
+                        return try directive.formatTyped(usize, us, out);
+                    }
+                },
+                else => {
+                    return try directive.formatTyped(T, data, out);
+                },
             }
         }
 
@@ -476,34 +505,35 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                         },
                         .array => |array| {
                             //std.debug.print("array for {s}\n", .{array.name});
-                            var local: [0xff]u8 = undefined;
-                            const name = local[0..makeFieldName(array.name, &local)];
                             if (T == []const []const u8) {
                                 try offsetArrayItem([]const u8, data, ofs[idx + 1 ..][0..2], html, out);
                             } else if (T == []const u8) {
                                 // skip
                             } else {
+                                var local: [0xff]u8 = undefined;
+                                const name = local[0..makeFieldName(array.name, &local)];
                                 try offsetArray(T, data, name, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
                             }
                             skip = array.len;
                         },
-                        .directive => |directive| switch (directive.verb) {
+                        .directive => |directive| switch (directive.d.verb) {
                             .variable => {
                                 //std.debug.print("directive\n", .{});
-                                offsetDirective(T, data, os, out) catch |err| switch (err) {
-                                    error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
-                                    error.VariableMissing => {
-                                        if (!is_test) log.err(
-                                            "Template Error, variable missing {{{s}}}",
-                                            .{html[os.start..os.end]},
-                                        );
-                                        try out.writeAll(html[os.start..os.end]);
-                                    },
+                                const child_data = os.getData(directive.kind, @ptrCast(&data));
+                                offsetDirective(directive.kind, child_data.*, directive.d, out) catch |err| switch (err) {
+                                    //error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
+                                    //error.VariableMissing => {
+                                    //    if (!is_test) log.err(
+                                    //        "Template Error, variable missing {{{s}}}",
+                                    //        .{html[os.start..os.end]},
+                                    //    );
+                                    //    try out.writeAll(html[os.start..os.end]);
+                                    //},
                                     else => return err,
                                 };
                             },
                             else => {
-                                std.debug.print("directive skipped {} {}\n", .{ directive.verb, ofs.len });
+                                std.debug.print("directive skipped {} {}\n", .{ directive.d.verb, ofs.len });
                             },
                         },
                         .template => |tmpl| {
