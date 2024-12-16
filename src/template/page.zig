@@ -10,29 +10,36 @@ const Kind = enum {
 const Offset = struct {
     start: usize,
     end: usize,
-    data_offset: ?usize = null,
     kind: union(enum) {
         slice: []const u8,
         directive: struct {
             name: []const u8,
-            d: Directive,
             kind: type,
+            data_offset: usize,
+            d: Directive,
         },
         template: struct {
             name: []const u8,
             html: []const u8,
+            data_offset: usize,
             len: usize,
         },
         array: struct {
             name: []const u8,
+            kind: type,
+            data_offset: usize,
             len: usize,
         },
     },
 
     pub fn getData(comptime o: Offset, T: type, ptr: [*]const u8) *const T {
-        if (o.data_offset) |ptr_offset| {
-            return @ptrCast(@alignCast(&ptr[ptr_offset]));
-        } else unreachable;
+        const ptr_offset: usize = switch (o.kind) {
+            .directive => |d| d.data_offset,
+            .template => |t| t.data_offset,
+            .array => |a| a.data_offset,
+            .slice => unreachable,
+        };
+        return @ptrCast(@alignCast(&ptr[ptr_offset]));
     }
 };
 
@@ -85,7 +92,7 @@ pub fn PageRuntime(comptime PageDataType: type) type {
     };
 }
 
-fn getOffset(T: type, name: []const u8, base: usize) ?usize {
+fn getOffset(T: type, name: []const u8, base: usize) usize {
     switch (@typeInfo(T)) {
         .Struct => {
             var local: [0xff]u8 = undefined;
@@ -93,7 +100,7 @@ fn getOffset(T: type, name: []const u8, base: usize) ?usize {
             const field = local[0..end];
             return @offsetOf(T, field) + base;
         },
-        else => return null,
+        else => unreachable,
     }
 }
 
@@ -120,7 +127,7 @@ test getOffset {
     const test_4 = comptime getOffset(SUT2, "parent", 0);
     try std.testing.expectEqual(8, test_4);
 
-    const test_5 = comptime getOffset(SUT1, "value", test_4.?);
+    const test_5 = comptime getOffset(SUT1, "value", test_4);
     try std.testing.expectEqual(16, test_5);
 
     const vut = SUT2{
@@ -136,20 +143,20 @@ test getOffset {
     // Force into runtime
     var vari: *const []const u8 = undefined;
     const ptr: [*]const u8 = @ptrCast(&vut);
-    vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[test_5.?])));
+    vari = @as(*const []const u8, @ptrCast(@alignCast(&ptr[test_5])));
     try std.testing.expectEqualStrings("clever girl", vari.*);
 }
 
-fn getChildType(T: type, name: []const u8) type {
+fn baseType(T: type, name: []const u8) type {
     var local: [0xff]u8 = undefined;
     const field = local[0..makeFieldName(name, &local)];
     //return @TypeOf(@FieldType(T, field)); // not in 0.13.0
     for (std.meta.fields(T)) |f| {
         if (eql(u8, f.name, field)) {
             switch (f.type) {
-                []const u8 => return f.type,
-                ?[]const u8 => return f.type,
-                ?usize => return f.type,
+                []const u8 => unreachable,
+                ?[]const u8 => unreachable,
+                ?usize => unreachable,
                 else => switch (@typeInfo(f.type)) {
                     .Pointer => |ptr| return ptr.child,
                     .Optional => |opt| return opt.child,
@@ -158,6 +165,17 @@ fn getChildType(T: type, name: []const u8) type {
                     else => @compileError("Unexpected kind " ++ f.name),
                 },
             }
+        }
+    } else unreachable;
+}
+
+fn fieldType(T: type, name: []const u8) type {
+    var local: [0xff]u8 = undefined;
+    const field = local[0..makeFieldName(name, &local)];
+    //return @TypeOf(@FieldType(T, field)); // not in 0.13.0
+    for (std.meta.fields(T)) |f| {
+        if (eql(u8, f.name, field)) {
+            return f.type;
         }
     } else unreachable;
 }
@@ -177,8 +195,20 @@ fn validateBlockSplit(
     end: usize,
     pblob: []const u8,
     drct: Directive,
-    os: Offset,
+    data_offset: usize,
 ) []const Offset {
+    const os = Offset{
+        .start = index,
+        .end = index + end,
+        .kind = .{
+            .directive = .{
+                .name = drct.noun,
+                .kind = []const u8,
+                .data_offset = data_offset,
+                .d = drct,
+            },
+        },
+    };
     // TODO Split needs whitespace postfix
     const ws_start: usize = offset + end;
     var wsidx = ws_start;
@@ -194,14 +224,21 @@ fn validateBlockSplit(
                 .start = index + drct.tag_block.len,
                 .end = index + wsidx,
                 .kind = .{
-                    .array = .{ .name = drct.noun, .len = 2 },
+                    .array = .{
+                        .name = drct.noun,
+                        .data_offset = data_offset,
+                        .kind = []const []const u8,
+                        .len = 2,
+                    },
                 },
             },
             os,
             .{
                 .start = 0,
                 .end = wsidx - end,
-                .kind = .{ .slice = pblob[0 .. wsidx - end] },
+                .kind = .{
+                    .slice = pblob[0 .. wsidx - end],
+                },
             },
         };
     } else {
@@ -209,8 +246,14 @@ fn validateBlockSplit(
             .{
                 .start = index + drct.tag_block.len,
                 .end = index + end,
+                .data_offset = null,
                 .kind = .{
-                    .array = .{ .name = drct.noun, .len = 1 },
+                    .array = .{
+                        .name = drct.noun,
+                        .kind = []const []const u8,
+                        .data_offset = data_offset,
+                        .len = 1,
+                    },
                 },
             },
             os,
@@ -228,49 +271,40 @@ fn validateDirective(
 ) []const Offset {
     @setEvalBranchQuota(15000);
     const data_offset = getOffset(BlockType, drct.noun, base_offset);
-    const kind = getChildType(BlockType, drct.noun);
     const end = drct.tag_block.len;
     switch (drct.verb) {
         .variable => {
+            const FieldT = fieldType(BlockType, drct.noun);
             const os = Offset{
                 .start = index,
                 .end = index + end,
-                .data_offset = data_offset,
                 .kind = .{
                     .directive = .{
                         .name = drct.noun,
+                        .kind = FieldT,
+                        .data_offset = data_offset,
                         .d = drct,
-                        .kind = kind,
                     },
                 },
             };
             return &[_]Offset{os};
         },
         .split => {
-            const os = Offset{
-                .start = index,
-                .end = index + end,
-                .data_offset = data_offset,
-                .kind = .{
-                    .directive = .{
-                        .name = drct.noun,
-                        .d = drct,
-                        .kind = kind,
-                    },
-                },
-            };
-            return validateBlockSplit(index, offset, end, pblob, drct, os)[0..];
+            const FieldT = fieldType(BlockType, drct.noun);
+            std.debug.assert(FieldT == []const []const u8);
+            return validateBlockSplit(index, offset, end, pblob, drct, data_offset)[0..];
         },
         .foreach, .with => {
+            const FieldT = fieldType(BlockType, drct.noun);
             const os = Offset{
                 .start = index,
                 .end = index + end,
-                .data_offset = data_offset,
                 .kind = .{
                     .directive = .{
                         .name = drct.noun,
+                        .kind = FieldT,
+                        .data_offset = data_offset,
                         .d = drct,
-                        .kind = kind,
                     },
                 },
             };
@@ -279,16 +313,18 @@ fn validateDirective(
                 // The code as written descends into the type.
                 // if the call stack flattens out, it might be
                 // better to calculate the offset from root.
-                const loop = validateBlock(
-                    body,
-                    getChildType(BlockType, drct.noun),
-                    0,
-                );
+                const BaseT = baseType(BlockType, drct.noun);
+                const loop = validateBlock(body, BaseT, 0);
                 return &[_]Offset{.{
                     .start = index + drct.tag_block_skip.?,
                     .end = index + end,
                     .kind = .{
-                        .array = .{ .name = drct.noun, .len = loop.len },
+                        .array = .{
+                            .name = drct.noun,
+                            .kind = FieldT,
+                            .data_offset = data_offset,
+                            .len = loop.len,
+                        },
                     },
                 }} ++ loop;
             } else {
@@ -296,8 +332,8 @@ fn validateDirective(
             }
         },
         .build => {
-            const child = getChildType(BlockType, drct.noun);
-            const loop = validateBlock(drct.otherwise.template.blob, child, 0);
+            const BaseT = baseType(BlockType, drct.noun);
+            const loop = validateBlock(drct.otherwise.template.blob, BaseT, 0);
             return &[_]Offset{.{
                 .start = index,
                 .end = index + end,
@@ -305,6 +341,7 @@ fn validateDirective(
                     .template = .{
                         .name = drct.noun,
                         .html = drct.otherwise.template.blob,
+                        .data_offset = data_offset,
                         .len = loop.len,
                     },
                 },
@@ -332,15 +369,10 @@ pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: us
                     [_]Offset{.{
                     .start = open_idx,
                     .end = index,
-                    .kind = .{ .slice = html[open_idx..index] },
-                }} ++ validateDirective(
-                    BlockType,
-                    index,
-                    offset,
-                    drct,
-                    pblob,
-                    base_offset,
-                );
+                    .kind = .{
+                        .slice = html[open_idx..index],
+                    },
+                }} ++ validateDirective(BlockType, index, offset, drct, pblob, base_offset);
                 const end = drct.tag_block.len;
                 pblob = pblob[end..];
                 index += end;
@@ -360,7 +392,9 @@ pub fn validateBlock(comptime html: []const u8, BlockType: type, base_offset: us
         found_offsets = found_offsets ++ [_]Offset{.{
             .start = open_idx,
             .end = html.len,
-            .kind = .{ .slice = html[open_idx..] },
+            .kind = .{
+                .slice = html[open_idx..],
+            },
         }};
     }
     return found_offsets;
@@ -384,7 +418,6 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
 
         fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
             std.debug.assert(directive.verb == .variable);
-            //@compileLog(T);
             switch (T) {
                 []const u8 => try out.writeAll(data),
                 ?[]const u8 => if (data) |d| {
@@ -403,75 +436,44 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
-        fn offsetArrayItem(T: type, list: []const T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
-            //std.debug.print("item {any}\n", .{T});
-            if (T == []const u8) {
-                for (list) |item| {
-                    try out.writeAll(item);
-                    // I should find a better way to write this hack
-                    if (ofs.len == 2) {
-                        if (ofs[1].kind == .slice) {
-                            try out.writeAll(html[ofs[1].start..ofs[1].end]);
-                        }
-                    }
-                }
-            } else {
-                for (list) |item| {
-                    try formatDirective(T, item, ofs, html, out);
-                }
-            }
-        }
-
         fn offsetOptionalItem(T: type, item: ?T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
-            if (comptime T == ?[]const u8) {
-                return offsetDirective(T, item.?, ofs[0], out);
-            }
+            if (comptime T == ?[]const u8) return offsetDirective(T, item.?, ofs[0], out);
             switch (@typeInfo(T)) {
-                .Int => {
-                    std.debug.print("skipped int\n", .{});
-                },
-                .Struct => {
-                    if (item) |itm| {
-                        try formatDirective(T, itm, ofs, html, out);
-                    }
-                },
+                .Int => std.debug.print("skipped int\n", .{}),
+                .Struct => if (item) |itm| try formatDirective(T, itm, ofs, html, out),
                 else => unreachable,
             }
         }
 
-        fn offsetArray(T: type, data: T, name: []const u8, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
-            inline for (std.meta.fields(T)) |field| {
-                if (eql(u8, name, field.name)) {
-                    //std.debug.print("array found {s}\n", .{name});
-                    return switch (field.type) {
-                        []const u8 => try out.writeAll(@field(data, field.name)),
-                        []const []const u8 => try offsetArrayItem([]const u8, @field(data, field.name), ofs, html, out),
-                        else => {
-                            //std.debug.print("array found {}\n", .{@typeInfo(field.type)});
-                            switch (@typeInfo(field.type)) {
-                                .Pointer => |ptr| {
-                                    std.debug.assert(ptr.size == .Slice);
-                                    try offsetArrayItem(ptr.child, @field(data, field.name), ofs, html, out);
-                                },
-                                .Optional => |opt| {
-                                    if (opt.child == []const u8) {
-                                        return;
-                                        //return offsetDirective(field.type, @field(data, field.name), ofs[0].kind.directive, out);
-                                    }
-
-                                    try offsetOptionalItem(opt.child, @field(data, field.name), ofs, html, out);
-                                },
-                                else => {
-                                    std.debug.print("unexpected type {any}\n", .{field.type});
-                                    //unreachable;
-                                },
+        fn offsetArray(T: type, data: T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
+            return switch (T) {
+                []const u8, u8 => unreachable,
+                []const []const u8 => {
+                    for (data) |each| {
+                        try out.writeAll(each);
+                        // I should find a better way to write this hack
+                        if (ofs.len == 2) {
+                            if (ofs[1].kind == .slice) {
+                                try out.writeAll(html[ofs[1].start..ofs[1].end]);
                             }
-                        },
-                    };
-                }
-            } else {
-                std.debug.print("error generating page, field {s} is missing\n", .{name});
-            }
+                        }
+                    }
+                },
+                else => switch (@typeInfo(T)) {
+                    .Pointer => |ptr| {
+                        std.debug.assert(ptr.size == .Slice);
+                        for (data) |each| try formatDirective(ptr.child, each, ofs, html, out);
+                    },
+                    .Optional => |opt| {
+                        if (opt.child == []const u8) unreachable;
+                        try offsetOptionalItem(opt.child, data, ofs, html, out);
+                    },
+                    else => {
+                        std.debug.print("unexpected type {s}\n", .{@typeName(T)});
+                        unreachable;
+                    },
+                },
+            };
         }
 
         fn offsetBuild(Parent: type, data: Parent, name: []const u8, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
@@ -504,16 +506,8 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                             }
                         },
                         .array => |array| {
-                            //std.debug.print("array for {s}\n", .{array.name});
-                            if (T == []const []const u8) {
-                                try offsetArrayItem([]const u8, data, ofs[idx + 1 ..][0..2], html, out);
-                            } else if (T == []const u8) {
-                                // skip
-                            } else {
-                                var local: [0xff]u8 = undefined;
-                                const name = local[0..makeFieldName(array.name, &local)];
-                                try offsetArray(T, data, name, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
-                            }
+                            const child_data = os.getData(array.kind, @ptrCast(&data));
+                            try offsetArray(array.kind, child_data.*, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
                             skip = array.len;
                         },
                         .directive => |directive| switch (directive.d.verb) {
