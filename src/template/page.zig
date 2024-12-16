@@ -374,7 +374,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
-        fn offsetArrayItem(T: type, list: []const T, ofs: []const Offset, html: []const u8, out: anytype) !void {
+        fn offsetArrayItem(T: type, list: []const T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
             //std.debug.print("item {any}\n", .{T});
             if (T == []const u8) {
                 for (list) |item| {
@@ -393,7 +393,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
-        fn offsetOptionalItem(T: type, item: ?T, ofs: []const Offset, html: []const u8, out: anytype) !void {
+        fn offsetOptionalItem(T: type, item: ?T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
             if (comptime T == ?[]const u8) {
                 return offsetDirective(T, item.?, ofs[0], out);
             }
@@ -410,7 +410,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
-        fn offsetArray(T: type, data: T, name: []const u8, ofs: []const Offset, html: []const u8, out: anytype) !void {
+        fn offsetArray(T: type, data: T, name: []const u8, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
             inline for (std.meta.fields(T)) |field| {
                 if (eql(u8, name, field.name)) {
                     //std.debug.print("array found {s}\n", .{name});
@@ -445,7 +445,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
-        fn offsetBuild(Parent: type, data: Parent, name: []const u8, ofs: []const Offset, html: []const u8, out: anytype) !void {
+        fn offsetBuild(Parent: type, data: Parent, name: []const u8, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
             if (Parent == []const u8) comptime unreachable;
             inline for (std.meta.fields(Parent)) |field| {
                 if (@typeInfo(field.type) != .Struct) continue;
@@ -455,65 +455,65 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             } else unreachable;
         }
 
-        fn formatDirective(T: type, data: T, ofs: []const Offset, html: []const u8, out: anytype) !void {
-            var last_end: usize = 0;
-            var idx: usize = 0;
-            while (idx < ofs.len) {
-                const os = ofs[idx];
-                idx += 1;
-                switch (os.kind) {
-                    .slice => |slice| {
-                        if (idx == 1) {
-                            try out.writeAll(std.mem.trimLeft(u8, slice, " \n\r"));
-                        } else if (idx == ofs.len) {
-                            //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
-                            try out.writeAll(slice);
-                        } else if (ofs.len == 1) {
-                            try out.writeAll(std.mem.trim(u8, slice, " \n\r"));
-                        } else {
-                            try out.writeAll(slice);
-                        }
-                    },
-                    .array => |array| {
-                        //std.debug.print("array for {s}\n", .{array.name});
-                        var local: [0xff]u8 = undefined;
-                        const name = local[0..makeFieldName(array.name, &local)];
-                        if (T == []const []const u8) {
-                            try offsetArrayItem([]const u8, data, ofs[idx .. idx + 1], html, out);
-                        } else if (T == []const u8) {
-                            // skip
-                        } else {
-                            try offsetArray(T, data, name, ofs[idx..][0..array.len], html[os.start..os.end], out);
-                        }
-                        idx += array.len;
-                    },
-                    .directive => |directive| switch (directive.verb) {
-                        .variable => {
-                            //std.debug.print("directive\n", .{});
-                            offsetDirective(T, data, os, out) catch |err| switch (err) {
-                                error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
-                                error.VariableMissing => {
-                                    if (!is_test) log.err(
-                                        "Template Error, variable missing {{{s}}}",
-                                        .{html[os.start..os.end]},
-                                    );
-                                    try out.writeAll(html[os.start..os.end]);
-                                },
-                                else => return err,
-                            };
+        fn formatDirective(T: type, data: T, comptime ofs: []const Offset, html: []const u8, out: anytype) !void {
+            var skip: usize = 0;
+            inline for (ofs, 0..) |os, idx| {
+                if (skip > 0) {
+                    skip -|= 1;
+                } else {
+                    switch (os.kind) {
+                        .slice => |slice| {
+                            if (idx == 0) {
+                                try out.writeAll(std.mem.trimLeft(u8, slice, " \n\r"));
+                            } else if (idx == ofs.len) {
+                                //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
+                                try out.writeAll(slice);
+                            } else if (ofs.len == 1) {
+                                try out.writeAll(std.mem.trim(u8, slice, " \n\r"));
+                            } else {
+                                try out.writeAll(slice);
+                            }
                         },
-                        else => {
-                            std.debug.print("directive skipped {} {}\n", .{ directive.verb, ofs.len });
+                        .array => |array| {
+                            //std.debug.print("array for {s}\n", .{array.name});
+                            var local: [0xff]u8 = undefined;
+                            const name = local[0..makeFieldName(array.name, &local)];
+                            if (T == []const []const u8) {
+                                try offsetArrayItem([]const u8, data, ofs[idx + 1 ..][0..2], html, out);
+                            } else if (T == []const u8) {
+                                // skip
+                            } else {
+                                try offsetArray(T, data, name, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
+                            }
+                            skip = array.len;
                         },
-                    },
-                    .template => |tmpl| {
-                        var local: [0xff]u8 = undefined;
-                        const name = local[0..makeFieldName(tmpl.name, &local)];
-                        try offsetBuild(T, data, name, ofs[idx..][0..tmpl.len], tmpl.html, out);
-                        idx += tmpl.len;
-                    },
+                        .directive => |directive| switch (directive.verb) {
+                            .variable => {
+                                //std.debug.print("directive\n", .{});
+                                offsetDirective(T, data, os, out) catch |err| switch (err) {
+                                    error.IgnoreDirective => try out.writeAll(html[os.start..os.end]),
+                                    error.VariableMissing => {
+                                        if (!is_test) log.err(
+                                            "Template Error, variable missing {{{s}}}",
+                                            .{html[os.start..os.end]},
+                                        );
+                                        try out.writeAll(html[os.start..os.end]);
+                                    },
+                                    else => return err,
+                                };
+                            },
+                            else => {
+                                std.debug.print("directive skipped {} {}\n", .{ directive.verb, ofs.len });
+                            },
+                        },
+                        .template => |tmpl| {
+                            var local: [0xff]u8 = undefined;
+                            const name = local[0..makeFieldName(tmpl.name, &local)];
+                            try offsetBuild(T, data, name, ofs[idx + 1 ..][0..tmpl.len], tmpl.html, out);
+                            skip = tmpl.len;
+                        },
+                    }
                 }
-                last_end = os.end;
             }
         }
 
