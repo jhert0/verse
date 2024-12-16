@@ -173,16 +173,16 @@ pub fn defaultResponse(comptime code: std.http.Status) BuildFn {
 
 fn notFound(vrs: *Verse) Error!void {
     vrs.status = .not_found;
-    const E4XX = @embedFile("fallback_html/4XX.html");
+    const E404 = @embedFile("fallback_html/404.html");
     try vrs.quickStart();
-    return vrs.sendRawSlice(E4XX);
+    return vrs.sendRawSlice(E404);
 }
 
 fn internalServerError(vrs: *Verse) Error!void {
     vrs.status = .internal_server_error;
-    const E5XX = @embedFile("fallback_html/5XX.html");
+    const E500 = @embedFile("fallback_html/500.html");
     try vrs.quickStart();
-    return vrs.sendRawSlice(E5XX);
+    return vrs.sendRawSlice(E500);
 }
 
 fn default(vrs: *Verse) Error!void {
