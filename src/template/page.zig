@@ -510,41 +510,39 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             inline for (ofs, 0..) |os, idx| {
                 if (skip > 0) {
                     skip -|= 1;
-                } else {
-                    switch (os.kind) {
-                        .slice => |slice| {
-                            if (idx == 0) {
-                                try out.writeAll(std.mem.trimLeft(u8, slice, " \n\r"));
-                            } else if (idx == ofs.len) {
-                                //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
-                                try out.writeAll(slice);
-                            } else if (ofs.len == 1) {
-                                try out.writeAll(std.mem.trim(u8, slice, " \n\r"));
-                            } else {
-                                try out.writeAll(slice);
-                            }
+                } else switch (os.kind) {
+                    .slice => |slice| {
+                        if (idx == 0) {
+                            try out.writeAll(std.mem.trimLeft(u8, slice, " \n\r"));
+                        } else if (idx == ofs.len) {
+                            //try out.writeAll(std.mem.trimRight(u8, html[os.start..os.end], " \n\r"));
+                            try out.writeAll(slice);
+                        } else if (ofs.len == 1) {
+                            try out.writeAll(std.mem.trim(u8, slice, " \n\r"));
+                        } else {
+                            try out.writeAll(slice);
+                        }
+                    },
+                    .array => |array| {
+                        const child_data = os.getData(array.kind, @ptrCast(&data));
+                        try offsetArray(array.kind, child_data.*, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
+                        skip = array.len;
+                    },
+                    .directive => |directive| switch (directive.d.verb) {
+                        .variable => {
+                            //std.debug.print("directive\n", .{});
+                            const child_data = os.getData(directive.kind, @ptrCast(&data));
+                            try offsetDirective(directive.kind, child_data.*, directive.d, out);
                         },
-                        .array => |array| {
-                            const child_data = os.getData(array.kind, @ptrCast(&data));
-                            try offsetArray(array.kind, child_data.*, ofs[idx + 1 ..][0..array.len], html[os.start..os.end], out);
-                            skip = array.len;
+                        else => {
+                            std.debug.print("directive skipped {} {}\n", .{ directive.d.verb, ofs.len });
                         },
-                        .directive => |directive| switch (directive.d.verb) {
-                            .variable => {
-                                //std.debug.print("directive\n", .{});
-                                const child_data = os.getData(directive.kind, @ptrCast(&data));
-                                try offsetDirective(directive.kind, child_data.*, directive.d, out);
-                            },
-                            else => {
-                                std.debug.print("directive skipped {} {}\n", .{ directive.d.verb, ofs.len });
-                            },
-                        },
-                        .template => |tmpl| {
-                            const child_data = os.getData(tmpl.kind, @ptrCast(&data));
-                            try formatDirective(tmpl.kind, child_data.*, ofs[idx + 1 ..][0..tmpl.len], tmpl.html, out);
-                            skip = tmpl.len;
-                        },
-                    }
+                    },
+                    .template => |tmpl| {
+                        const child_data = os.getData(tmpl.kind, @ptrCast(&data));
+                        try formatDirective(tmpl.kind, child_data.*, ofs[idx + 1 ..][0..tmpl.len], tmpl.html, out);
+                        skip = tmpl.len;
+                    },
                 }
             }
         }
