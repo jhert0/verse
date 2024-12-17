@@ -547,6 +547,112 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             }
         }
 
+        fn ioVecDirective(T: type, data: T, drct: Directive, vec: []IOVec, a: Allocator) !usize {
+            std.debug.assert(drct.verb == .variable);
+            switch (T) {
+                []const u8 => vec[0] = .{ .base = data.ptr, .len = data.len },
+                ?[]const u8 => if (data) |d| {
+                    vec[0] = .{ .base = d.ptr, .len = d.len };
+                } else if (drct.otherwise == .default) {
+                    vec[0] = .{ .base = drct.otherwise.default.ptr, .len = drct.otherwise.default.len };
+                },
+                ?usize => {
+                    if (data) |us| {
+                        const int = try allocPrint(a, "{}", .{us});
+                        vec[0] = .{ .base = int.ptr, .len = int.len };
+                    }
+                },
+                else => {
+                    std.debug.print("ignored directive {} {s}\n", .{ drct.verb, drct.noun });
+                    return 0;
+                },
+            }
+            return 1;
+        }
+
+        fn ioVecArray(T: type, data: T, comptime ofs: []const Offset, vec: []IOVec, a: Allocator) !usize {
+            var idx: usize = 0;
+            switch (T) {
+                []const u8, u8 => unreachable,
+                []const []const u8 => {
+                    for (data) |each| {
+                        vec[idx] = .{ .base = each.ptr, .len = each.len };
+                        idx += 1;
+                        // I should find a better way to write this hack
+                        if (ofs.len == 2) {
+                            if (ofs[1].kind == .slice) {
+                                std.debug.print("slice ws ignored\n", .{});
+                                //try out.writeAll(html[ofs[1].start..ofs[1].end]);
+                            }
+                        }
+                    }
+                },
+                else => switch (@typeInfo(T)) {
+                    .Pointer => |ptr| {
+                        std.debug.assert(ptr.size == .Slice);
+                        for (data) |each| idx += try ioVecCore(ptr.child, each, ofs, vec[idx..], a);
+                    },
+                    .Optional => |opt| {
+                        if (opt.child == []const u8) unreachable;
+                        switch (@typeInfo(opt.child)) {
+                            .Int => std.debug.print("skipped int\n", .{}),
+                            .Struct => {
+                                if (data) |d| return try ioVecCore(opt.child, d, ofs, vec, a);
+                            },
+                            else => unreachable,
+                        }
+                    },
+                    else => {
+                        std.debug.print("unexpected type {s}\n", .{@typeName(T)});
+                        unreachable;
+                    },
+                },
+            }
+            return idx;
+        }
+
+        pub fn ioVecCore(T: type, data: T, ofs: []const Offset, vec: []IOVec, a: Allocator) !usize {
+            var skip: usize = 0;
+            var vec_idx: usize = 0;
+            inline for (ofs, 1..) |os, os_idx| {
+                if (skip > 0) {
+                    skip -|= 1;
+                } else switch (os.kind) {
+                    .slice => |slice| {
+                        vec[vec_idx] = .{
+                            .base = slice.ptr,
+                            .len = slice.len,
+                        };
+                        vec_idx += 1;
+                    },
+                    .array => |array| {
+                        const child_data = os.getData(array.kind, @ptrCast(&data));
+                        vec_idx += try ioVecArray(array.kind, child_data.*, ofs[os_idx..][0..array.len], vec[vec_idx..], a);
+                        skip = array.len;
+                    },
+                    .directive => |directive| switch (directive.d.verb) {
+                        .variable => {
+                            const child_data = os.getData(directive.kind, @ptrCast(&data));
+                            vec_idx += try ioVecDirective(directive.kind, child_data.*, directive.d, vec[vec_idx..], a);
+                        },
+                        else => {
+                            std.debug.print("directive skipped {} {}\n", .{ directive.d.verb, ofs.len });
+                        },
+                    },
+                    .template => |tmpl| {
+                        const child_data = os.getData(tmpl.kind, @ptrCast(&data));
+                        vec_idx += try ioVecCore(tmpl.kind, child_data.*, ofs[os_idx..][0..tmpl.len], vec[vec_idx..], a);
+                        skip = tmpl.len;
+                    },
+                }
+            }
+            return vec_idx;
+        }
+
+        pub fn ioVec(self: Self, vec: []IOVec, a: Allocator) ![]IOVec {
+            return vec[0..try ioVecCore(PageDataType, self.data, Self.DataOffsets[0..], vec[0..], a)];
+        }
+
         pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, out: anytype) !void {
             //std.debug.print("offs {any}\n", .{Self.DataOffsets});
             const blob = Self.PageTemplate.blob;
@@ -579,10 +685,12 @@ fn typeField(T: type, name: []const u8, data: T) ?[]const u8 {
 
 const std = @import("std");
 const is_test = @import("builtin").is_test;
+const log = std.log.scoped(.Verse);
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
+const IOVec = std.posix.iovec_const;
 const eql = std.mem.eql;
 const indexOfScalar = std.mem.indexOfScalar;
 const indexOfScalarPos = std.mem.indexOfScalarPos;
 const indexOfPosLinear = std.mem.indexOfPosLinear;
-const log = std.log.scoped(.Verse);
+const allocPrint = std.fmt.allocPrint;
