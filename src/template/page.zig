@@ -233,7 +233,7 @@ fn validateBlockSplit(
                 .start = 0,
                 .end = wsidx - end,
                 .kind = .{
-                    .slice = pblob[0 .. wsidx - end],
+                    .slice = pblob[offset + end .. wsidx],
                 },
             },
         };
@@ -421,23 +421,49 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                     skip -= 1;
                 } else switch (dos.kind) {
                     .slice => count += 1,
-                    .directive => count += 1, // TODO actually less that 1
+                    .directive => |_| {
+                        // TODO actually less that 1
+                        count += 1;
+
+                        // I originally implemented this assuming that the
+                        // correct implementation should give the exact size,
+                        // but it's possible the correct implementation should
+                        // give a max size, to optimize for time instead of
+                        // space.
+                        //
+                        //const dr_opt = dos.getData(drct.kind, @ptrCast(&self.data));
+                        //switch (drct.kind) {
+                        //    usize, []const u8 => count += 1,
+                        //    ?[]const u8 => {
+                        //        if (dr_opt.*) |_| {
+                        //            count += 1;
+                        //        } else if (drct.d.otherwise == .default) {
+                        //            count += 1;
+                        //        }
+                        //    },
+                        //    ?usize => {
+                        //        if (dr_opt.*) |_| count += 1;
+                        //    },
+                        //    else => |t| @compileError("unsupported directive type " ++ @typeName(t)),
+                        //}
+
+                    },
                     .template => |t| {
                         // TODO not implemented correctly
                         count += t.len;
                         skip = t.len;
                     },
                     .array => |array| {
-                        var size: usize = 0;
                         switch (@typeInfo(array.kind)) {
                             .Pointer => {
                                 const child_data = dos.getData(array.kind, @ptrCast(&self.data));
-                                size = child_data.len;
+                                count += array.len * child_data.len;
                             },
-                            .Optional => {}, // TODO implement
+                            .Optional => {
+                                count += array.len;
+                            }, // TODO implement
                             else => unreachable,
                         }
-                        count += array.len * size;
                         skip = array.len;
                     },
                 }
@@ -556,6 +582,10 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                 } else if (drct.otherwise == .default) {
                     vec[0] = .{ .base = drct.otherwise.default.ptr, .len = drct.otherwise.default.len };
                 },
+                usize, isize => {
+                    const int = try allocPrint(a, "{}", .{data});
+                    vec[0] = .{ .base = int.ptr, .len = int.len };
+                },
                 ?usize => {
                     if (data) |us| {
                         const int = try allocPrint(a, "{}", .{us});
@@ -580,9 +610,10 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
                         idx += 1;
                         // I should find a better way to write this hack
                         if (ofs.len == 2) {
-                            if (ofs[1].kind == .slice) {
-                                std.debug.print("slice ws ignored\n", .{});
-                                //try out.writeAll(html[ofs[1].start..ofs[1].end]);
+                            if (ofs[1].kind == .slice and ofs[1].kind.slice.len > 0) {
+                                std.debug.print("would be -{any}.{} '{s}'\n", .{ ofs[1].kind.slice, ofs[1].kind.slice.len, ofs[1].kind.slice });
+                                vec[idx] = .{ .base = ofs[1].kind.slice.ptr, .len = ofs[1].kind.slice.len };
+                                idx += 1;
                             }
                         }
                     }
@@ -649,6 +680,10 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return vec_idx;
         }
 
+        /// Caller must
+        /// 0. provide a vec that is large enough for the entire page.
+        /// 1. provide an allocator that's able to track allocations outside of
+        ///    this function (e.g. an ArenaAllocator) This unintentionally leaks by design.
         pub fn ioVec(self: Self, vec: []IOVec, a: Allocator) ![]IOVec {
             return vec[0..try ioVecCore(PageDataType, self.data, Self.DataOffsets[0..], vec[0..], a)];
         }
@@ -662,6 +697,40 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             try formatDirective(PageDataType, self.data, Self.DataOffsets[0..], blob, out);
         }
     };
+}
+
+test Page {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const PUT = Templates.PageData("templates/example.html");
+
+    var vecbuf = [_]IOVec{undefined} ** 128;
+
+    const page = PUT.init(.{
+        .simple_variable = " ",
+        .required_and_provided = " ",
+        .default_provided = " ",
+        .positive_number = 1,
+        .optional_with = null,
+        .namespaced_with = .{ .simple_variable = " " },
+        .basic_loop = &.{
+            .{ .color = "red", .text = "red" },
+            .{ .color = "blue", .text = "blue" },
+            .{ .color = "green", .text = "green" },
+        },
+        .slices = &.{ "1", "2", "3", "4" },
+        .include_vars = .{ .template_name = " ", .simple_variable = " " },
+        .empty_vars = .{},
+    });
+
+    const vec = try page.ioVec(vecbuf[0..], a);
+
+    try std.testing.expect(vec.len < page.iovecCount());
+    // The following two numbers weren't validated in anyway.
+    try std.testing.expectEqual(51, vec.len);
+    try std.testing.expectEqual(56, page.iovecCount());
 }
 
 const makeFieldName = Templates.makeFieldName;

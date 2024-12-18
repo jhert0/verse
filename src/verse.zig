@@ -263,21 +263,34 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
 
     switch (vrs.downstream) {
         .http, .zwsgi => |stream| {
-            // TODO call vec counter, and heap alloc when > 2048
-            var vecs = [_]std.posix.iovec_const{undefined} ** (2048 * 8);
-
-            const vec = page.ioVec(vecs[0..], vrs.alloc) catch |iovec_err| {
-                log.err("Error building iovec ({}) fallback to writer", .{iovec_err});
-
-                const w = stream.writer();
-                page.format("{}", .{}, w) catch |err| switch (err) {
-                    else => log.err("Page Build Error {}", .{err}),
+            var vecs = [_]std.posix.iovec_const{undefined} ** 2048;
+            const required = page.iovecCount();
+            if (required > 2048) {
+                var vech = vrs.alloc.alloc(std.posix.iovec_const, required) catch @panic("OOM");
+                const vec = page.ioVec(vech[0..], vrs.alloc) catch |iovec_err| {
+                    log.err("Error building iovec ({}) fallback to writer", .{iovec_err});
+                    const w = stream.writer();
+                    page.format("{}", .{}, w) catch |err| switch (err) {
+                        else => log.err("Page Build Error {}", .{err}),
+                    };
+                    return;
                 };
-                return;
-            };
-            stream.writevAll(vec) catch |err| switch (err) {
-                else => log.err("iovec write error Error {}", .{err}),
-            };
+                stream.writevAll(vec) catch |err| switch (err) {
+                    else => log.err("iovec write error Error {}", .{err}),
+                };
+            } else {
+                const vec = page.ioVec(vecs[0..], vrs.alloc) catch |iovec_err| {
+                    log.err("Error building iovec ({}) fallback to writer", .{iovec_err});
+                    const w = stream.writer();
+                    page.format("{}", .{}, w) catch |err| switch (err) {
+                        else => log.err("Page Build Error {}", .{err}),
+                    };
+                    return;
+                };
+                stream.writevAll(vec) catch |err| switch (err) {
+                    else => log.err("iovec write error Error {}", .{err}),
+                };
+            }
         },
         else => unreachable,
     }
