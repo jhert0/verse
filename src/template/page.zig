@@ -470,7 +470,7 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             switch (@typeInfo(T)) {
                 .Int => std.debug.print("skipped int\n", .{}),
                 .Struct => if (item) |itm| try formatDirective(T, itm, ofs, html, out),
-                else => unreachable,
+                else => comptime unreachable,
             }
         }
 
