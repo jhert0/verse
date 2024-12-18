@@ -409,14 +409,10 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
             return .{ .data = d };
         }
 
-        fn vecCount(ofs: []const Offset) usize {
-            _ = ofs;
-        }
-
-        pub fn iovecCount(self: Self) usize {
+        pub fn iovecCount(ofs: []const Offset, data: [*]const u8) usize {
             var count: usize = 0;
             var skip: usize = 0;
-            inline for (Self.DataOffsets) |dos| {
+            inline for (ofs, 1..) |dos, idx| {
                 if (skip > 0) {
                     skip -= 1;
                 } else switch (dos.kind) {
@@ -449,26 +445,34 @@ pub fn Page(comptime template: Template, comptime PageDataType: type) type {
 
                     },
                     .template => |t| {
-                        // TODO not implemented correctly
-                        count += t.len;
+                        const child_data = dos.getData(t.kind, data);
+                        count += iovecCount(ofs[idx..][0..t.len], @ptrCast(child_data));
                         skip = t.len;
                     },
-                    .array => |array| {
-                        switch (@typeInfo(array.kind)) {
-                            .Pointer => {
-                                const child_data = dos.getData(array.kind, @ptrCast(&self.data));
-                                count += array.len * child_data.len;
-                            },
-                            .Optional => {
-                                count += array.len;
-                            }, // TODO implement
-                            else => unreachable,
-                        }
-                        skip = array.len;
+                    .array => |array| switch (@typeInfo(array.kind)) {
+                        .Pointer => {
+                            const child_data: array.kind = dos.getData(array.kind, data).*;
+                            for (child_data) |cd| {
+                                count += iovecCount(ofs[idx..][0..array.len], @ptrCast(&cd));
+                            }
+                            skip = array.len;
+                        },
+                        .Optional => {
+                            const child_data = dos.getData(array.kind, data).*;
+                            if (child_data) |cd| {
+                                count += iovecCount(ofs[idx..][0..array.len], @ptrCast(&cd));
+                            } else count += array.len;
+                            skip = array.len;
+                        }, // TODO implement
+                        else => unreachable,
                     },
                 }
             }
             return count;
+        }
+
+        pub fn iovecCountAll(self: Self) usize {
+            return iovecCount(Self.DataOffsets[0..], @ptrCast(&self.data));
         }
 
         fn offsetDirective(T: type, data: T, directive: Directive, out: anytype) !void {
@@ -727,10 +731,10 @@ test Page {
 
     const vec = try page.ioVec(vecbuf[0..], a);
 
-    try std.testing.expect(vec.len < page.iovecCount());
+    try std.testing.expect(vec.len < page.iovecCountAll());
     // The following two numbers weren't validated in anyway.
     try std.testing.expectEqual(51, vec.len);
-    try std.testing.expectEqual(56, page.iovecCount());
+    try std.testing.expectEqual(56, page.iovecCountAll());
 }
 
 const makeFieldName = Templates.makeFieldName;

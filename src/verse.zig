@@ -264,7 +264,7 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
     switch (vrs.downstream) {
         .http, .zwsgi => |stream| {
             var vecs = [_]std.posix.iovec_const{undefined} ** 2048;
-            const required = page.iovecCount();
+            const required = page.iovecCountAll();
             if (required > 2048) {
                 var vech = vrs.alloc.alloc(std.posix.iovec_const, required) catch @panic("OOM");
                 const vec = page.ioVec(vech[0..], vrs.alloc) catch |iovec_err| {
