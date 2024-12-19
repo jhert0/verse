@@ -173,16 +173,23 @@ pub fn defaultResponse(comptime code: std.http.Status) BuildFn {
 
 fn notFound(vrs: *Verse) Error!void {
     vrs.status = .not_found;
-    const E4XX = @embedFile("fallback_html/4XX.html");
+    const E404 = @embedFile("fallback_html/404.html");
     try vrs.quickStart();
-    return vrs.sendRawSlice(E4XX);
+    return vrs.sendRawSlice(E404);
 }
 
 fn internalServerError(vrs: *Verse) Error!void {
     vrs.status = .internal_server_error;
-    const E5XX = @embedFile("fallback_html/5XX.html");
+    const E500 = @embedFile("fallback_html/500.html");
     try vrs.quickStart();
-    return vrs.sendRawSlice(E5XX);
+    return vrs.sendRawSlice(E500);
+}
+
+fn methodNotAllowed(vrs: *Verse) Error!void {
+    vrs.status = .method_not_allowed;
+    const E405 = @embedFile("fallback_html/405.html");
+    try vrs.quickStart();
+    return vrs.sendRawSlice(E405);
 }
 
 fn default(vrs: *Verse) Error!void {
@@ -205,8 +212,11 @@ pub fn router(vrs: *Verse, comptime routes: []const Match) Error!BuildFn {
         if (eql(u8, search, ep.name)) {
             switch (ep.match) {
                 .build => |call| {
-                    if (ep.methods.matchMethod(vrs.request.method))
+                    if (ep.methods.matchMethod(vrs.request.method)) {
                         return call;
+                    } else {
+                        return methodNotAllowed;
+                    }
                 },
                 .route => |route| {
                     return route(vrs) catch |err| switch (err) {
