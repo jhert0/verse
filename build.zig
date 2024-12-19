@@ -25,6 +25,8 @@ pub fn build(b: *std.Build) !void {
         // Zig build time doesn't expose it's state in a way I know how to check...
         // so we yolo it like python :D
         lib_unit_tests.root_module.addImport("comptime_templates", comptime_templates);
+        const comptime_structs = compiler.buildStructs() catch unreachable;
+        lib_unit_tests.root_module.addImport("comptime_structs", comptime_structs);
     } else |_| {}
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");
