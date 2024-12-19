@@ -263,10 +263,24 @@ pub fn sendPage(vrs: *Verse, page: anytype) NetworkError!void {
 
     switch (vrs.downstream) {
         .http, .zwsgi => |stream| {
-            const w = stream.writer();
-            page.format("{}", .{}, w) catch |err| switch (err) {
-                else => log.err("Page Build Error {}", .{err}),
+            var vec_s = [_]std.posix.iovec_const{undefined} ** 2048;
+            var vecs: []std.posix.iovec_const = vec_s[0..];
+            const required = page.iovecCountAll();
+            if (required > 2048) {
+                vecs = vrs.alloc.alloc(std.posix.iovec_const, required) catch @panic("OOM");
+            }
+            const vec = page.ioVec(vecs, vrs.alloc) catch |iovec_err| {
+                log.err("Error building iovec ({}) fallback to writer", .{iovec_err});
+                const w = stream.writer();
+                page.format("{}", .{}, w) catch |err| switch (err) {
+                    else => log.err("Page Build Error {}", .{err}),
+                };
+                return;
             };
+            stream.writevAll(vec) catch |err| switch (err) {
+                else => log.err("iovec write error Error {}", .{err}),
+            };
+            if (required > 2048) vrs.alloc.free(vecs);
         },
         else => unreachable,
     }
